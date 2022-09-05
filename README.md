@@ -1,15 +1,30 @@
 # sparseconverter
 Converter matrix for a range of array formats (backends) in Python, focusing on sparse arrays.
 
-This library is targeted at projects that want to support a wide range of array formats as input, output or
-for calculations. All array libraries already do support format detection, creation and export from and to various formats,
+This library can help to implement support for a wide range of array formats as input, output or
+for calculations. All dense and sparse array libraries already do support format detection, creation and export from and to various formats,
 but with different APIs, different sets of formats and different sets of supported features -- dtypes, shapes, device classes etc.
 
-As an example, efficient conversion from `sparse.COO` to `cupyx.scipy.sparse.coo_matrix` can be done via `cupyx.scipy.sparse.coo_matrix(sparse.COO.to_scipy_sparse())`.
-However, both `scipy.sparse.coo_matrix` and `cupyx.scipy.sparse.coo_matrix` only support 2D arrays. On top of that, `cupyx.scipy.sparse.coo_matrix`
-only supports floating point dtypes and `bool`.
+This project creates an unified API for all conversions between the supported formats and takes care of details such as reshaping,
+dtype conversion, and using an efficient intermediate format for multi-step conversions.
 
-This project creates an unified API for all conversions between the supported formats and takes care of details such as using an efficient intermediate format, reshaping and dtype conversion.
+As an example, efficient conversion from a dense CuPy array `arr` to `sparse.COO` can be done by `sparse.COO(cupyx.scipy.sparse.coo_matrix(arr).get())`.
+However, both `scipy.sparse.coo_matrix` and `cupyx.scipy.sparse.coo_matrix` only support 2D arrays. On top of that, `cupyx.scipy.sparse.coo_matrix`
+only supports floating point dtypes and `bool`. The conversion function in `sparseconverters` is consequently:
+
+```python
+def _CUPY_to_sparse_coo(arr: cupy.ndarray):
+    if arr.dtype in CUPY_SPARSE_DTYPES:
+        reshaped = arr.reshape((arr.shape[0], -1))
+        intermediate = cupyx.scipy.sparse.coo_matrix(reshaped)
+        return sparse.COO(intermediate.get()).reshape(arr.shape)
+    else:
+        intermediate = cupy.asnumpy(arr)
+        return sparse.COO.from_numpy(intermediate)
+```
+
+`sparseconverters` provides such tested conversion functions between all supported formats,
+including a rough cost metric based on benchmarks.
 
 ## Features
 * Supports Python 3.6 - 3.10
@@ -42,6 +57,7 @@ This project creates an unified API for all conversions between the supported fo
 * cupyx.sparse formats with dtype `bool`
 * PyTorch arrays
 * SciPy sparse arrays as opposed to SciPy sparse matrices.
+* More detailed cost metric based on more real-world use cases and parameters.
 
 ## Notes
 
