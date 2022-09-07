@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sparseconverter"
+description = "Converter matrix and type determination for a range of array formats, focusing on sparse arrays"
+license = {file = "LICENSE"}
+keywords = ["numpy", "scipy.sparse", "sparse", "array", "matrix", "cupy", "cupyx.scipy.sparse"]
+requires-python = ">=3.6"
+dynamic = ["version", "readme"]
+dependencies = [
+    "numpy",
+    "scipy",
+    "sparse"
+]
+
+[project.optional-dependencies]
+cupy = ["cupy"]
+
+[tool.setuptools.dynamic]
+version = {attr = "sparseconverter.__version__"}
+readme = {file = ["README.md"]}
