@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    strategy:
+      matrix:
+        python_version: [3.6, 3.9, 3.10]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '${{ python_version }}'
+          cache: pip
+      - run: pip install -e .[test]
+      - run: pytest tests/
+
