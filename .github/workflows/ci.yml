@@ -5,17 +5,17 @@ on:
   pull_request:
 
 jobs:
-  linux:
+  tests:
     strategy:
       matrix:
         python_version: [3.6, 3.9, 3.10]
         os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
-          python-version: '${{ python_version }}'
+          python-version: '${{ matrix.python_version }}'
           cache: pip
       - run: pip install -e .[test]
       - run: pytest tests/
