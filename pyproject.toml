@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cupy = ["cupy"]
+test = ["pytest"]
 
 [tool.setuptools.dynamic]
 version = {attr = "sparseconverter.__version__"}
