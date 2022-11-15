@@ -28,7 +28,7 @@ jobs:
       - name: Install tooling
         run: pip install build
       - name: Build wheel
-        run: python -m build --wheel
+        run: python -m build --wheel --sdist
       - name: Publish package
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
         uses: pypa/gh-action-pypi-publish@release/v1
