@@ -4,13 +4,10 @@
 
 import scipy.sparse
 
-from sparseconverter import (
-    CPU_BACKENDS, CUPY, NUMPY, SPARSE_COO, SPARSE_GCXS,
-    cheapest_pair, for_backend, get_backend
-)
+import sparseconverter as spc
 
 # We want to support a range of multidimensional array formats
-SUPPORTED = {NUMPY, SPARSE_COO, SPARSE_GCXS, CUPY}
+SUPPORTED = {spc.NUMPY, spc.SPARSE_COO, spc.SPARSE_GCXS, spc.CUPY}
 
 # we detect if we have working CuPy support
 try:
@@ -24,7 +21,7 @@ except Exception:
 
 # We only use CPU formats in case we don't have CuPy or it is broken
 if cupy is None:
-    SUPPORTED = SUPPORTED.intersection(CPU_BACKENDS)
+    SUPPORTED = SUPPORTED.intersection(spc.CPU_BACKENDS)
 
 
 # Our exemplary algorithm
@@ -37,9 +34,9 @@ def bin_last_axis(arr, bin_factor=2):
     '''
     # We figure out which target format can be created efficiently from the
     # input data
-    _, right = cheapest_pair((get_backend(arr), ), SUPPORTED)
+    _, right = spc.cheapest_pair((spc.get_backend(arr), ), SUPPORTED)
     # We convert to the format of choice
-    converted = for_backend(arr, right)
+    converted = spc.for_backend(arr, right)
 
     # Binning from
     # https://stackoverflow.com/questions/21921178/binning-a-numpy-array
@@ -55,7 +52,7 @@ if __name__ == '__main__':
     res1 = bin_last_axis(arr1)
     # The return type is GCXS since it can be created efficiently from CSC or CSR
     print("Example 1")
-    print(res1, get_backend(res1))
+    print(res1, spc.get_backend(res1))
 
     # Create COO input data
     arr2 = scipy.sparse.eye(7, format='coo')
@@ -63,4 +60,4 @@ if __name__ == '__main__':
     # The return type is COO since conversion from scipy.sparse.coo_matrix to
     # sparse.COO is efficient
     print("Example 2")
-    print(res2, get_backend(res2))
+    print(res2, spc.get_backend(res2))
