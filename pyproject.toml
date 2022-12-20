@@ -15,6 +15,20 @@ dependencies = [
     "sparse",
     "typing-extensions",
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Development Status :: 3 - Alpha",
+]
+authors = [
+    {name="Dieter Weber", email="d.weber@fz-juelich.de"},
+]
+
+[project.urls]
+repository = "https://github.com/LiberTEM/sparseconverter"
 
 [project.optional-dependencies]
 cupy = ["cupy"]
