@@ -1,7 +1,9 @@
 from functools import partial, reduce
 import itertools
 import time
-from typing import TYPE_CHECKING, Callable, Dict, Iterable, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, Optional, Tuple, Union
+from typing_extensions import Literal
+import warnings
 
 import numpy as np
 import scipy.sparse as sp
@@ -18,7 +20,7 @@ SPARSE_COO = 'sparse.COO'
 SPARSE_GCXS = 'sparse.GCXS'
 SPARSE_DOK = 'sparse.DOK'
 
-# On Python 3.6 only the matrix interface of SciPy is supported
+# On Python 3.7 only the matrix interface of SciPy is supported
 # FIXME include scipy arrays when used with newer Python versions.
 SCIPY_COO = 'scipy.sparse.coo_matrix'
 SCIPY_CSR = 'scipy.sparse.csr_matrix'
@@ -115,6 +117,8 @@ class _ClassDict:
             res = cupy.ndarray
         elif item in (CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC):
             import cupyx.scipy  # noqa: F401
+            # This is safe because it is one of the constants above
+            # that are known good.
             res = eval(item)
         else:
             raise KeyError(f'Unknown format {item}')
@@ -149,7 +153,7 @@ def prod(shape: Tuple) -> int:
     '''
     # Force 64 bit since int on Windows is 32 bit, leading to possible
     # overflows of np.prod(shape)
-    return np.prod(shape, dtype=np.int64)
+    return int(np.prod(shape, dtype=np.int64))
 
 
 def _flatsig(arr: ArrayT) -> ArrayT:
@@ -219,70 +223,78 @@ class _ConverterDict:
     '''
     def __init__(self):
         self._converters = {}
-        for backend in BACKENDS:
-            self._converters[(backend, backend)] = _identity
-        # Both are NumPy arrays, distinguished for device selection
-        for left in (NUMPY, CUDA):
-            for right in (NUMPY, CUDA):
-                self._converters[(left, right)] = _identity
-        self._converters[(NUMPY, NUMPY_MATRIX)] = chain(_flatsig, np.matrix)
-        self._converters[(NUMPY_MATRIX, NUMPY)] = np.array
-        # Support direct construction from each other
-        for left in (
-                    NUMPY, CUDA, SPARSE_COO, SPARSE_GCXS, SPARSE_DOK,
-                    SCIPY_COO, SCIPY_CSR, SCIPY_CSC
-                ):
-            for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
-                if (left, right) not in self._converters:
-                    self._converters[(left, right)] = _classes[right]
-        # Overwrite from before
-        self._converters[(SPARSE_DOK, SPARSE_GCXS)] = partial(sparse.DOK.asformat, format='gcxs')
-        self._converters[(SPARSE_GCXS, SPARSE_DOK)] = partial(sparse.GCXS.asformat, format='dok')
+        try:
+            for backend in BACKENDS:
+                self._converters[(backend, backend)] = _identity
+            # Both are NumPy arrays, distinguished for device selection
+            for left in (NUMPY, CUDA):
+                for right in (NUMPY, CUDA):
+                    self._converters[(left, right)] = _identity
+            self._converters[(NUMPY, NUMPY_MATRIX)] = chain(_flatsig, np.matrix)
+            self._converters[(NUMPY_MATRIX, NUMPY)] = np.array
+            # Support direct construction from each other
+            for left in (
+                        NUMPY, CUDA, SPARSE_COO, SPARSE_GCXS, SPARSE_DOK,
+                        SCIPY_COO, SCIPY_CSR, SCIPY_CSC
+                    ):
+                for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = _classes[right]
+            # Overwrite from before
+            self._converters[(SPARSE_DOK, SPARSE_GCXS)] = partial(
+                sparse.DOK.asformat, format='gcxs'
+            )
+            self._converters[(SPARSE_GCXS, SPARSE_DOK)] = partial(
+                sparse.GCXS.asformat, format='dok'
+            )
 
-        for left in NUMPY, CUDA, SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+            for left in NUMPY, CUDA, SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+                for right in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = chain(_flatsig, _classes[right])
+            for left in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
+                for right in NUMPY, CUDA:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = _classes[left].todense
+            for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+                for right in NUMPY, CUDA:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = _classes[left].toarray
+            for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+                for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = _classes[right].from_scipy_sparse
+            self._converters[(SPARSE_COO, SCIPY_COO)] = chain(_flatsig, sparse.COO.to_scipy_sparse)
+            self._converters[(SPARSE_COO, SCIPY_CSR)] = chain(_flatsig, sparse.COO.tocsr)
+            self._converters[(SPARSE_COO, SCIPY_CSC)] = chain(_flatsig, sparse.COO.tocsc)
+            self._converters[(SPARSE_GCXS, SCIPY_COO)] = _GCXS_to_coo
+            self._converters[(SPARSE_GCXS, SCIPY_CSR)] = _GCXS_to_csr
+            self._converters[(SPARSE_GCXS, SCIPY_CSC)] = _GCXS_to_csc
+
             for right in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
-                if (left, right) not in self._converters:
-                    self._converters[(left, right)] = chain(_flatsig, _classes[right])
-        for left in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
-            for right in NUMPY, CUDA:
-                if (left, right) not in self._converters:
-                    self._converters[(left, right)] = _classes[left].todense
-        for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
-            for right in NUMPY, CUDA:
-                if (left, right) not in self._converters:
-                    self._converters[(left, right)] = _classes[left].toarray
-        for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
-            for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
-                if (left, right) not in self._converters:
-                    self._converters[(left, right)] = _classes[right].from_scipy_sparse
-        self._converters[(SPARSE_COO, SCIPY_COO)] = chain(_flatsig, sparse.COO.to_scipy_sparse)
-        self._converters[(SPARSE_COO, SCIPY_CSR)] = chain(_flatsig, sparse.COO.tocsr)
-        self._converters[(SPARSE_COO, SCIPY_CSC)] = chain(_flatsig, sparse.COO.tocsc)
-        self._converters[(SPARSE_GCXS, SCIPY_COO)] = _GCXS_to_coo
-        self._converters[(SPARSE_GCXS, SCIPY_CSR)] = _GCXS_to_csr
-        self._converters[(SPARSE_GCXS, SCIPY_CSC)] = _GCXS_to_csc
+                if (SPARSE_DOK, right) not in self._converters:
+                    self._converters[(SPARSE_DOK, right)] = chain(
+                        self._converters[(SPARSE_DOK, SPARSE_COO)],
+                        self._converters[(SPARSE_COO, right)]
+                    )
 
-        for right in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
-            if (SPARSE_DOK, right) not in self._converters:
-                self._converters[(SPARSE_DOK, right)] = chain(
-                    self._converters[(SPARSE_DOK, SPARSE_COO)],
-                    self._converters[(SPARSE_COO, right)]
-                )
-
-        for left in CPU_BACKENDS:
-            proxy = NUMPY
-            right = NUMPY_MATRIX
-            if (left, right) not in self._converters:
-                c1 = self._converters[(left, proxy)]
-                c2 = self._converters[(proxy, right)]
-                self._converters[(left, right)] = chain(c1, c2)
-        for right in CPU_BACKENDS:
-            proxy = NUMPY
-            left = NUMPY_MATRIX
-            if (left, right) not in self._converters:
-                c1 = self._converters[(left, proxy)]
-                c2 = self._converters[(proxy, right)]
-                self._converters[(left, right)] = chain(c1, c2)
+            for left in CPU_BACKENDS:
+                proxy = NUMPY
+                right = NUMPY_MATRIX
+                if (left, right) not in self._converters:
+                    c1 = self._converters[(left, proxy)]
+                    c2 = self._converters[(proxy, right)]
+                    self._converters[(left, right)] = chain(c1, c2)
+            for right in CPU_BACKENDS:
+                proxy = NUMPY
+                left = NUMPY_MATRIX
+                if (left, right) not in self._converters:
+                    c1 = self._converters[(left, proxy)]
+                    c2 = self._converters[(proxy, right)]
+                    self._converters[(left, right)] = chain(c1, c2)
+        except Exception:
+            self._converters = None
+            raise
 
     def _populate_cupy(self):
         import cupy
@@ -298,7 +310,30 @@ class _ConverterDict:
             sp = cupyx.scipy.sparse.csr_matrix(a)
             return not np.allclose(a, sp.todense())
 
+        def detect_coo_works():
+            works = True
+            a = cupy.array([
+                (1, 1j),
+                (1j, -1-1j)
+
+            ]).astype(np.complex128)
+            try:
+                cupyx.scipy.sparse.coo_matrix(a)
+            except Exception:
+                works = False
+            return works
+
+        def fail_coo_complex128(arr):
+            raise NotImplementedError(
+                "Please upgrade CuPy and/or CUDA: "
+                f"Constructing {CUPY_SCIPY_COO} from {CUPY} doesn't work (old CuPy version)"
+                "and installation is affected by this bug: "
+                "https://github.com/cupy/cupy/issues/7035 "
+                "(old cuSPARSE version)."
+            )
+
         has_csr_complex128_bug = detect_csr_complex128_bug()
+        has_cupy_coo_construction = detect_coo_works()
 
         CUPY_SPARSE_DTYPES = {
             np.float32, np.float64, np.complex64, np.complex128
@@ -474,12 +509,26 @@ class _ConverterDict:
         # could be handled by the block above.
         left, right = CUPY, CUPY_SCIPY_COO
         if (left, right) not in self._converters:
-            self._converters[(left, right)] = chain(
-                _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
-            )
+            if has_cupy_coo_construction:
+                self._converters[(left, right)] = chain(
+                    _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
+                )
+            elif not has_csr_complex128_bug:
+                self._converters[(left, right)] = chain(
+                    _flatsig, _adjust_dtype_cupy_sparse, _classes[CUPY_SCIPY_CSR], _classes[right]
+                )
+            else:
+                self._converters[(left, right)] = fail_coo_complex128
+                warnings.warn(
+                    "Please upgrade CuPy and/or CUDA: "
+                    f"Constructing {CUPY_SCIPY_COO} from {CUPY} doesn't work (old CuPy version)"
+                    "and installation is affected by this bug: "
+                    "https://github.com/cupy/cupy/issues/7035 "
+                    "(old cuSPARSE version)."
+                )
         for right in CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
             if (left, right) not in self._converters:
-                if has_csr_complex128_bug:
+                if has_csr_complex128_bug and has_cupy_coo_construction:
                     self._converters[(left, right)] = chain(
                         # First convert to COO which is not affected
                         # Fortunately the overhead is not too bad.
@@ -487,10 +536,19 @@ class _ConverterDict:
                         _classes[CUPY_SCIPY_COO],
                         _classes[right]
                     )
-                else:
+                elif not has_csr_complex128_bug:
                     self._converters[(left, right)] = chain(
 
                         _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
+                    )
+                else:
+                    self._converters[(left, right)] = fail_coo_complex128
+                    warnings.warn(
+                        "Please upgrade CuPy and/or CUDA: "
+                        f"Constructing {CUPY_SCIPY_COO} from {CUPY} doesn't work (old CuPy version)"
+                        "and installation is affected by this bug: "
+                        "https://github.com/cupy/cupy/issues/7035 "
+                        "(old cuSPARSE version)."
                     )
         for left in NUMPY, CUDA:
             for right in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
@@ -599,11 +657,17 @@ class _ConverterDict:
                     raise RuntimeError(f'Missing converter {left} -> {right}')
 
     def __getitem__(self, item):
+        if self._converters is None:
+            raise RuntimeError('Building the converter matrix has failed.')
         res = self._converters.get(item, False)
         if res is False:
             left, right = item
             if left in CUDA_BACKENDS or right in CUDA_BACKENDS:
-                self._populate_cupy()
+                try:
+                    self._populate_cupy()
+                except Exception:
+                    self._converters = None
+                    raise
             return self._converters[item]
         else:
             return res
@@ -618,178 +682,178 @@ class _ConverterDict:
 _converters = _ConverterDict()
 # Measured with a run of benchmark_conversions on a "representative machine" aka my laptop
 # (32, 512, 512), np.float32, density 0.1
-# See prototypes/array_formats/benchmark.ipynb to generate this list
+# See scripts/benchmark.ipynb to generate this list
 # FIXME improve cost basis based on real use cases.
 _cost = {
-    (SCIPY_CSC, SCIPY_CSC): 6.8e-07,
-    (SCIPY_CSC, SPARSE_DOK): 0.79008641,
-    (SCIPY_CSC, CUPY_SCIPY_COO): 0.01557962,
-    (SCIPY_CSC, SCIPY_CSR): 0.00550373,
-    (SCIPY_CSC, CUPY): 0.07368527,
-    (SCIPY_CSC, CUDA): 0.00645836,
-    (SCIPY_CSC, NUMPY): 0.00646419,
-    (SCIPY_CSC, CUPY_SCIPY_CSR): 0.00894698,
-    (SCIPY_CSC, NUMPY_MATRIX): 0.06175063,
-    (SCIPY_CSC, SCIPY_COO): 0.00913096,
-    (SCIPY_CSC, SPARSE_GCXS): 1.715e-05,
-    (SCIPY_CSC, SPARSE_COO): 0.10771111,
-    (SCIPY_CSC, CUPY_SCIPY_CSC): 0.00276772,
-    (SPARSE_DOK, SCIPY_CSC): 0.42924186,
-    (SPARSE_DOK, SPARSE_DOK): 8.1e-07,
-    (SPARSE_DOK, CUPY_SCIPY_COO): 0.45422632,
-    (SPARSE_DOK, SCIPY_CSR): 0.41378311,
-    (SPARSE_DOK, CUPY): 0.12193486,
-    (SPARSE_DOK, CUDA): 0.11697014,
-    (SPARSE_DOK, NUMPY): 0.111815,
-    (SPARSE_DOK, CUPY_SCIPY_CSR): 0.45438094,
-    (SPARSE_DOK, NUMPY_MATRIX): 0.12303009,
-    (SPARSE_DOK, SCIPY_COO): 0.40668993,
-    (SPARSE_DOK, SPARSE_GCXS): 0.42601204,
-    (SPARSE_DOK, SPARSE_COO): 0.39792751,
-    (SPARSE_DOK, CUPY_SCIPY_CSC): 0.42898774,
-    (CUPY_SCIPY_COO, SCIPY_CSC): 0.0520641,
-    (CUPY_SCIPY_COO, SPARSE_DOK): 0.69566436,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_COO): 8e-07,
-    (CUPY_SCIPY_COO, SCIPY_CSR): 0.05163085,
-    (CUPY_SCIPY_COO, CUPY): 0.11410962,
-    (CUPY_SCIPY_COO, CUDA): 0.01298642,
-    (CUPY_SCIPY_COO, NUMPY): 0.01314296,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_CSR): 0.04786648,
-    (CUPY_SCIPY_COO, NUMPY_MATRIX): 0.01981244,
-    (CUPY_SCIPY_COO, SCIPY_COO): 0.00711411,
-    (CUPY_SCIPY_COO, SPARSE_GCXS): 0.0518312,
-    (CUPY_SCIPY_COO, SPARSE_COO): 0.0226392,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_CSC): 0.04807331,
-    (SCIPY_CSR, SCIPY_CSC): 0.01132071,
-    (SCIPY_CSR, SPARSE_DOK): 0.69419015,
-    (SCIPY_CSR, CUPY_SCIPY_COO): 0.03507685,
-    (SCIPY_CSR, SCIPY_CSR): 8.1e-07,
-    (SCIPY_CSR, CUPY): 0.0736361,
-    (SCIPY_CSR, CUDA): 0.00702799,
-    (SCIPY_CSR, NUMPY): 0.00613211,
-    (SCIPY_CSR, CUPY_SCIPY_CSR): 0.00214472,
-    (SCIPY_CSR, NUMPY_MATRIX): 0.01560373,
-    (SCIPY_CSR, SCIPY_COO): 0.00780115,
-    (SCIPY_CSR, SPARSE_GCXS): 1.791e-05,
-    (SCIPY_CSR, SPARSE_COO): 0.01731952,
-    (SCIPY_CSR, CUPY_SCIPY_CSC): 0.01247452,
-    (CUPY, SCIPY_CSC): 0.08765124,
-    (CUPY, SPARSE_DOK): 0.44793429,
-    (CUPY, CUPY_SCIPY_COO): 0.01578986,
-    (CUPY, SCIPY_CSR): 0.08288962,
-    (CUPY, CUPY): 8.1e-07,
-    (CUPY, CUDA): 0.011692,
-    (CUPY, NUMPY): 0.01315366,
-    (CUPY, CUPY_SCIPY_CSR): 0.01067939,
-    (CUPY, NUMPY_MATRIX): 0.01975819,
-    (CUPY, SCIPY_COO): 0.07855287,
-    (CUPY, SPARSE_GCXS): 0.09928033,
-    (CUPY, SPARSE_COO): 0.07420958,
-    (CUPY, CUPY_SCIPY_CSC): 0.01580088,
-    (CUDA, SCIPY_CSC): 0.07511825,
-    (CUDA, SPARSE_DOK): 0.42874134,
-    (CUDA, CUPY_SCIPY_COO): 0.02223272,
-    (CUDA, SCIPY_CSR): 0.07167406,
-    (CUDA, CUPY): 0.0062838,
-    (CUDA, CUDA): 7.5e-07,
-    (CUDA, NUMPY): 8e-07,
-    (CUDA, CUPY_SCIPY_CSR): 0.02201833,
-    (CUDA, NUMPY_MATRIX): 0.00721113,
-    (CUDA, SCIPY_COO): 0.06756767,
-    (CUDA, SPARSE_GCXS): 0.08923092,
-    (CUDA, SPARSE_COO): 0.05519825,
-    (CUDA, CUPY_SCIPY_CSC): 0.03305383,
-    (NUMPY, SCIPY_CSC): 0.07595573,
-    (NUMPY, SPARSE_DOK): 0.42557287,
-    (NUMPY, CUPY_SCIPY_COO): 0.03367578,
-    (NUMPY, SCIPY_CSR): 0.07286735,
-    (NUMPY, CUPY): 0.00426659,
-    (NUMPY, CUDA): 8.1e-07,
-    (NUMPY, NUMPY): 7.6e-07,
-    (NUMPY, CUPY_SCIPY_CSR): 0.02202718,
-    (NUMPY, NUMPY_MATRIX): 0.00715483,
-    (NUMPY, SCIPY_COO): 0.06798563,
-    (NUMPY, SPARSE_GCXS): 0.08982199,
-    (NUMPY, SPARSE_COO): 0.05319294,
-    (NUMPY, CUPY_SCIPY_CSC): 0.03394102,
-    (CUPY_SCIPY_CSR, SCIPY_CSC): 0.00628662,
-    (CUPY_SCIPY_CSR, SPARSE_DOK): 0.6935086,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_COO): 0.01812139,
-    (CUPY_SCIPY_CSR, SCIPY_CSR): 0.00290519,
-    (CUPY_SCIPY_CSR, CUPY): 0.07112426,
-    (CUPY_SCIPY_CSR, CUDA): 0.0088542,
-    (CUPY_SCIPY_CSR, NUMPY): 0.00929009,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSR): 8.4e-07,
-    (CUPY_SCIPY_CSR, NUMPY_MATRIX): 0.01770824,
-    (CUPY_SCIPY_CSR, SCIPY_COO): 0.01478172,
-    (CUPY_SCIPY_CSR, SPARSE_GCXS): 0.00313166,
-    (CUPY_SCIPY_CSR, SPARSE_COO): 0.03076698,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC): 0.00219811,
-    (NUMPY_MATRIX, SCIPY_CSC): 0.08562059,
-    (NUMPY_MATRIX, SPARSE_DOK): 0.38622755,
-    (NUMPY_MATRIX, CUPY_SCIPY_COO): 0.04382591,
-    (NUMPY_MATRIX, SCIPY_CSR): 0.08020001,
-    (NUMPY_MATRIX, CUPY): 0.00930196,
-    (NUMPY_MATRIX, CUDA): 0.00666705,
-    (NUMPY_MATRIX, NUMPY): 0.00819635,
-    (NUMPY_MATRIX, CUPY_SCIPY_CSR): 0.0261312,
-    (NUMPY_MATRIX, NUMPY_MATRIX): 6.5e-07,
-    (NUMPY_MATRIX, SCIPY_COO): 0.07484995,
-    (NUMPY_MATRIX, SPARSE_GCXS): 0.08768329,
-    (NUMPY_MATRIX, SPARSE_COO): 0.0599519,
-    (NUMPY_MATRIX, CUPY_SCIPY_CSC): 0.04084738,
-    (SCIPY_COO, SCIPY_CSC): 0.01241523,
-    (SCIPY_COO, SPARSE_DOK): 0.68932816,
-    (SCIPY_COO, CUPY_SCIPY_COO): 0.02920637,
-    (SCIPY_COO, SCIPY_CSR): 0.00376677,
-    (SCIPY_COO, CUPY): 0.12038468,
-    (SCIPY_COO, CUDA): 0.00611036,
-    (SCIPY_COO, NUMPY): 0.00636043,
-    (SCIPY_COO, CUPY_SCIPY_CSR): 0.01180241,
-    (SCIPY_COO, NUMPY_MATRIX): 0.01291071,
-    (SCIPY_COO, SCIPY_COO): 6.6e-07,
-    (SCIPY_COO, SPARSE_GCXS): 0.00395217,
-    (SCIPY_COO, SPARSE_COO): 0.00128454,
-    (SCIPY_COO, CUPY_SCIPY_CSC): 0.01739878,
-    (SPARSE_GCXS, SCIPY_CSC): 0.38719814,
-    (SPARSE_GCXS, SPARSE_DOK): 0.80167217,
-    (SPARSE_GCXS, CUPY_SCIPY_COO): 0.52250334,
-    (SPARSE_GCXS, SCIPY_CSR): 0.37709386,
-    (SPARSE_GCXS, CUPY): 0.05500747,
-    (SPARSE_GCXS, CUDA): 0.05242294,
-    (SPARSE_GCXS, NUMPY): 0.05339986,
-    (SPARSE_GCXS, CUPY_SCIPY_CSR): 0.48872876,
-    (SPARSE_GCXS, NUMPY_MATRIX): 0.05962629,
-    (SPARSE_GCXS, SCIPY_COO): 0.3914773,
-    (SPARSE_GCXS, SPARSE_GCXS): 7.1e-07,
-    (SPARSE_GCXS, SPARSE_COO): 0.03642134,
-    (SPARSE_GCXS, CUPY_SCIPY_CSC): 0.48377229,
-    (SPARSE_COO, SCIPY_CSC): 0.0324796,
-    (SPARSE_COO, SPARSE_DOK): 0.73635922,
-    (SPARSE_COO, CUPY_SCIPY_COO): 0.05414041,
-    (SPARSE_COO, SCIPY_CSR): 0.02293617,
-    (SPARSE_COO, CUPY): 0.01775059,
-    (SPARSE_COO, CUDA): 0.0172146,
-    (SPARSE_COO, NUMPY): 0.01501184,
-    (SPARSE_COO, CUPY_SCIPY_CSR): 0.03100931,
-    (SPARSE_COO, NUMPY_MATRIX): 0.02309117,
-    (SPARSE_COO, SCIPY_COO): 0.02206325,
-    (SPARSE_COO, SPARSE_GCXS): 0.03331701,
-    (SPARSE_COO, SPARSE_COO): 7.2e-07,
-    (SPARSE_COO, CUPY_SCIPY_CSC): 0.03927987,
-    (CUPY_SCIPY_CSC, SCIPY_CSC): 0.01082002,
-    (CUPY_SCIPY_CSC, SPARSE_DOK): 0.81606757,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_COO): 0.02791661,
-    (CUPY_SCIPY_CSC, SCIPY_CSR): 0.00620633,
-    (CUPY_SCIPY_CSC, CUPY): 0.07202113,
-    (CUPY_SCIPY_CSC, CUDA): 0.01021739,
-    (CUPY_SCIPY_CSC, NUMPY): 0.01122473,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSR): 0.0032001,
-    (CUPY_SCIPY_CSC, NUMPY_MATRIX): 0.06228253,
-    (CUPY_SCIPY_CSC, SCIPY_COO): 0.0149932,
-    (CUPY_SCIPY_CSC, SPARSE_GCXS): 0.00343712,
-    (CUPY_SCIPY_CSC, SPARSE_COO): 0.12067594,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSC): 1.41e-06,
+    (SCIPY_CSR, SCIPY_CSR): 1.559e-05,
+    (SCIPY_CSR, NUMPY_MATRIX): 0.01296974,
+    (SCIPY_CSR, SCIPY_COO): 0.00750969,
+    (SCIPY_CSR, CUPY_SCIPY_COO): 0.01204903,
+    (SCIPY_CSR, CUPY_SCIPY_CSC): 0.01167255,
+    (SCIPY_CSR, SPARSE_GCXS): 0.00011317,
+    (SCIPY_CSR, CUDA): 0.00557031,
+    (SCIPY_CSR, SPARSE_DOK): 0.76682186,
+    (SCIPY_CSR, SCIPY_CSC): 0.01089365,
+    (SCIPY_CSR, SPARSE_COO): 0.01680042,
+    (SCIPY_CSR, CUPY): 0.04632367,
+    (SCIPY_CSR, NUMPY): 0.00495233,
+    (SCIPY_CSR, CUPY_SCIPY_CSR): 0.00258754,
+    (NUMPY_MATRIX, SCIPY_CSR): 0.07890904,
+    (NUMPY_MATRIX, NUMPY_MATRIX): 1.088e-05,
+    (NUMPY_MATRIX, SCIPY_COO): 0.07567136,
+    (NUMPY_MATRIX, CUPY_SCIPY_COO): 0.06118977,
+    (NUMPY_MATRIX, CUPY_SCIPY_CSC): 0.06415718,
+    (NUMPY_MATRIX, SPARSE_GCXS): 0.08824788,
+    (NUMPY_MATRIX, CUDA): 0.00578329,
+    (NUMPY_MATRIX, SPARSE_DOK): 0.40563613,
+    (NUMPY_MATRIX, SCIPY_CSC): 0.08555071,
+    (NUMPY_MATRIX, SPARSE_COO): 0.0559763,
+    (NUMPY_MATRIX, CUPY): 0.01035024,
+    (NUMPY_MATRIX, NUMPY): 0.00535645,
+    (NUMPY_MATRIX, CUPY_SCIPY_CSR): 0.05678837,
+    (SCIPY_COO, SCIPY_CSR): 0.00395482,
+    (SCIPY_COO, NUMPY_MATRIX): 0.0140713,
+    (SCIPY_COO, SCIPY_COO): 1.347e-05,
+    (SCIPY_COO, CUPY_SCIPY_COO): 0.00961638,
+    (SCIPY_COO, CUPY_SCIPY_CSC): 0.01900467,
+    (SCIPY_COO, SPARSE_GCXS): 0.00433509,
+    (SCIPY_COO, CUDA): 0.00515917,
+    (SCIPY_COO, SPARSE_DOK): 0.73489066,
+    (SCIPY_COO, SCIPY_CSC): 0.0104346,
+    (SCIPY_COO, SPARSE_COO): 0.00170327,
+    (SCIPY_COO, CUPY): 0.09446578,
+    (SCIPY_COO, NUMPY): 0.00495998,
+    (SCIPY_COO, CUPY_SCIPY_CSR): 0.00931616,
+    (CUPY_SCIPY_COO, SCIPY_CSR): 0.04777264,
+    (CUPY_SCIPY_COO, NUMPY_MATRIX): 0.02061129,
+    (CUPY_SCIPY_COO, SCIPY_COO): 0.00705612,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_COO): 1.379e-05,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_CSC): 0.05469087,
+    (CUPY_SCIPY_COO, SPARSE_GCXS): 0.0513449,
+    (CUPY_SCIPY_COO, CUDA): 0.01209151,
+    (CUPY_SCIPY_COO, SPARSE_DOK): 0.77208511,
+    (CUPY_SCIPY_COO, SCIPY_CSC): 0.0499516,
+    (CUPY_SCIPY_COO, SPARSE_COO): 0.02214925,
+    (CUPY_SCIPY_COO, CUPY): 0.09027534,
+    (CUPY_SCIPY_COO, NUMPY): 0.01201211,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_CSR): 0.03314292,
+    (CUPY_SCIPY_CSC, SCIPY_CSR): 0.00688394,
+    (CUPY_SCIPY_CSC, NUMPY_MATRIX): 0.07303444,
+    (CUPY_SCIPY_CSC, SCIPY_COO): 0.01199444,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_COO): 0.00533084,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSC): 1.648e-05,
+    (CUPY_SCIPY_CSC, SPARSE_GCXS): 0.0097886,
+    (CUPY_SCIPY_CSC, CUDA): 0.01783166,
+    (CUPY_SCIPY_CSC, SPARSE_DOK): 0.86450981,
+    (CUPY_SCIPY_CSC, SCIPY_CSC): 0.01065992,
+    (CUPY_SCIPY_CSC, SPARSE_COO): 0.1532939,
+    (CUPY_SCIPY_CSC, CUPY): 0.04758708,
+    (CUPY_SCIPY_CSC, NUMPY): 0.00978129,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSR): 0.0033697,
+    (SPARSE_GCXS, SCIPY_CSR): 0.37600336,
+    (SPARSE_GCXS, NUMPY_MATRIX): 0.05694959,
+    (SPARSE_GCXS, SCIPY_COO): 0.38016824,
+    (SPARSE_GCXS, CUPY_SCIPY_COO): 0.47960541,
+    (SPARSE_GCXS, CUPY_SCIPY_CSC): 0.47599027,
+    (SPARSE_GCXS, SPARSE_GCXS): 1.615e-05,
+    (SPARSE_GCXS, CUDA): 0.05275748,
+    (SPARSE_GCXS, SPARSE_DOK): 0.85363852,
+    (SPARSE_GCXS, SCIPY_CSC): 0.39251911,
+    (SPARSE_GCXS, SPARSE_COO): 0.03932804,
+    (SPARSE_GCXS, CUPY): 0.05639892,
+    (SPARSE_GCXS, NUMPY): 0.04964975,
+    (SPARSE_GCXS, CUPY_SCIPY_CSR): 0.4698627,
+    (CUDA, SCIPY_CSR): 0.06849603,
+    (CUDA, NUMPY_MATRIX): 0.00715849,
+    (CUDA, SCIPY_COO): 0.06719043,
+    (CUDA, CUPY_SCIPY_COO): 0.02642474,
+    (CUDA, CUPY_SCIPY_CSC): 0.05032621,
+    (CUDA, SPARSE_GCXS): 0.08859502,
+    (CUDA, CUDA): 1.339e-05,
+    (CUDA, SPARSE_DOK): 0.44135139,
+    (CUDA, SCIPY_CSC): 0.07839255,
+    (CUDA, SPARSE_COO): 0.05350484,
+    (CUDA, CUPY): 0.00270518,
+    (CUDA, NUMPY): 1.306e-05,
+    (CUDA, CUPY_SCIPY_CSR): 0.04938413,
+    (SPARSE_DOK, SCIPY_CSR): 0.42894893,
+    (SPARSE_DOK, NUMPY_MATRIX): 0.12251845,
+    (SPARSE_DOK, SCIPY_COO): 0.42916841,
+    (SPARSE_DOK, CUPY_SCIPY_COO): 0.44956792,
+    (SPARSE_DOK, CUPY_SCIPY_CSC): 0.43956515,
+    (SPARSE_DOK, SPARSE_GCXS): 0.43635561,
+    (SPARSE_DOK, CUDA): 0.12824518,
+    (SPARSE_DOK, SPARSE_DOK): 1.616e-05,
+    (SPARSE_DOK, SCIPY_CSC): 0.46030054,
+    (SPARSE_DOK, SPARSE_COO): 0.4250845,
+    (SPARSE_DOK, CUPY): 0.12498838,
+    (SPARSE_DOK, NUMPY): 0.11823033,
+    (SPARSE_DOK, CUPY_SCIPY_CSR): 0.45987103,
+    (SCIPY_CSC, SCIPY_CSR): 0.0054996,
+    (SCIPY_CSC, NUMPY_MATRIX): 0.07307879,
+    (SCIPY_CSC, SCIPY_COO): 0.01060489,
+    (SCIPY_CSC, CUPY_SCIPY_COO): 0.02735876,
+    (SCIPY_CSC, CUPY_SCIPY_CSC): 0.00292798,
+    (SCIPY_CSC, SPARSE_GCXS): 0.00010905,
+    (SCIPY_CSC, CUDA): 0.00538367,
+    (SCIPY_CSC, SPARSE_DOK): 0.91296357,
+    (SCIPY_CSC, SCIPY_CSC): 1.296e-05,
+    (SCIPY_CSC, SPARSE_COO): 0.11731304,
+    (SCIPY_CSC, CUPY): 0.05177709,
+    (SCIPY_CSC, NUMPY): 0.00545825,
+    (SCIPY_CSC, CUPY_SCIPY_CSR): 0.00863952,
+    (SPARSE_COO, SCIPY_CSR): 0.02078962,
+    (SPARSE_COO, NUMPY_MATRIX): 0.02362814,
+    (SPARSE_COO, SCIPY_COO): 0.02096254,
+    (SPARSE_COO, CUPY_SCIPY_COO): 0.0420385,
+    (SPARSE_COO, CUPY_SCIPY_CSC): 0.03903864,
+    (SPARSE_COO, SPARSE_GCXS): 0.03501943,
+    (SPARSE_COO, CUDA): 0.01465496,
+    (SPARSE_COO, SPARSE_DOK): 0.84704376,
+    (SPARSE_COO, SCIPY_CSC): 0.03454946,
+    (SPARSE_COO, SPARSE_COO): 1.571e-05,
+    (SPARSE_COO, CUPY): 0.02025341,
+    (SPARSE_COO, NUMPY): 0.01620725,
+    (SPARSE_COO, CUPY_SCIPY_CSR): 0.03059877,
+    (CUPY, SCIPY_CSR): 0.12303358,
+    (CUPY, NUMPY_MATRIX): 0.05054565,
+    (CUPY, SCIPY_COO): 0.11904488,
+    (CUPY, CUPY_SCIPY_COO): 0.04152052,
+    (CUPY, CUPY_SCIPY_CSC): 0.03795195,
+    (CUPY, SPARSE_GCXS): 0.10820665,
+    (CUPY, CUDA): 0.01813538,
+    (CUPY, SPARSE_DOK): 0.50905772,
+    (CUPY, SCIPY_CSC): 0.13346666,
+    (CUPY, SPARSE_COO): 0.09894143,
+    (CUPY, CUPY): 1.734e-05,
+    (CUPY, NUMPY): 0.04129853,
+    (CUPY, CUPY_SCIPY_CSR): 0.0361525,
+    (NUMPY, SCIPY_CSR): 0.07865694,
+    (NUMPY, NUMPY_MATRIX): 0.00669508,
+    (NUMPY, SCIPY_COO): 0.0726669,
+    (NUMPY, CUPY_SCIPY_COO): 0.05301622,
+    (NUMPY, CUPY_SCIPY_CSC): 0.05427296,
+    (NUMPY, SPARSE_GCXS): 0.10012981,
+    (NUMPY, CUDA): 1.651e-05,
+    (NUMPY, SPARSE_DOK): 0.47538513,
+    (NUMPY, SCIPY_CSC): 0.08593782,
+    (NUMPY, SPARSE_COO): 0.05733851,
+    (NUMPY, CUPY): 0.00309234,
+    (NUMPY, NUMPY): 1.403e-05,
+    (NUMPY, CUPY_SCIPY_CSR): 0.05010841,
+    (CUPY_SCIPY_CSR, SCIPY_CSR): 0.00352851,
+    (CUPY_SCIPY_CSR, NUMPY_MATRIX): 0.01715979,
+    (CUPY_SCIPY_CSR, SCIPY_COO): 0.01212154,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_COO): 0.00400256,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC): 0.01130015,
+    (CUPY_SCIPY_CSR, SPARSE_GCXS): 0.00834753,
+    (CUPY_SCIPY_CSR, CUDA): 0.01613052,
+    (CUPY_SCIPY_CSR, SPARSE_DOK): 0.81718251,
+    (CUPY_SCIPY_CSR, SCIPY_CSC): 0.05202263,
+    (CUPY_SCIPY_CSR, SPARSE_COO): 0.04919191,
+    (CUPY_SCIPY_CSR, CUPY): 0.04461966,
+    (CUPY_SCIPY_CSR, NUMPY): 0.00841893,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSR): 1.677e-05,
 }
 
 # In order to support subclasses and not check all formats each time
@@ -854,7 +918,14 @@ def for_backend(arr: ArrayT, backend: Optional[ArrayBackend], strict: bool = Tru
     return converter(arr)
 
 
-def check_shape(arr: ArrayT, shape: Iterable[int]) -> bool:
+def check_shape(arr: ArrayT, shape: Iterable[int]) -> None:
+    '''
+    Raise an exception if the shape of arr is incompatible
+    with the provided shape.
+
+    It checks if :code:`arr` only supports 2D shapes. In that case
+    it expects the shape of arr to be :code: `(shape[0], prod(shape[1:]))`
+    '''
     shape = tuple(shape)
     backend = get_backend(arr)
     if backend in D2_BACKENDS:
@@ -865,11 +936,10 @@ def check_shape(arr: ArrayT, shape: Iterable[int]) -> bool:
                 f"Mismatching shape {arr.shape} vs expected {expected} for {shape}, "
                 f"backend {backend}."
             )
-    # Also catches None for an unknown backend
+    # Also checks shape if backend is None for an unknown backend
     else:
         if arr.shape != shape:
             raise ValueError(f"Mismatching shape {arr.shape} vs {shape}, backend {backend}.")
-    return True
 
 
 def get_device_class(backend: Optional[ArrayBackend]) -> DeviceClass:
@@ -930,6 +1000,8 @@ def benchmark_conversions(shape, dtype, density, backends=BACKENDS, repeats=10, 
     feedstock = sparse.random(shape=shape, density=density, data_rvs=data_rvs)
     assert feedstock.dtype == dtype
 
+    ref = for_backend(feedstock, NUMPY)
+
     for left in backends:
         source = for_backend(feedstock, left)
         for right in backends:
@@ -940,8 +1012,10 @@ def benchmark_conversions(shape, dtype, density, backends=BACKENDS, repeats=10, 
             total_time = 0
             for repeat in range(repeats):
                 start = time.perf_counter_ns()
-                for_backend(source, right)
+                res = for_backend(source, right)
                 stop = time.perf_counter_ns()
+                res_np = for_backend(res, NUMPY).reshape(ref.shape)
+                assert np.allclose(ref, res_np)
                 duration = stop - start
                 min_time = min(min_time, duration)
                 max_time = max(max_time, duration)

@@ -7,12 +7,13 @@ name = "sparseconverter"
 description = "Converter matrix and type determination for a range of array formats, focusing on sparse arrays"
 license = {file = "LICENSE"}
 keywords = ["numpy", "scipy.sparse", "sparse", "array", "matrix", "cupy", "cupyx.scipy.sparse"]
-requires-python = ">=3.6"
+requires-python = ">=3.7"
 dynamic = ["version", "readme"]
 dependencies = [
     "numpy",
     "scipy",
-    "sparse"
+    "sparse",
+    "typing-extensions",
 ]
 
 [project.optional-dependencies]

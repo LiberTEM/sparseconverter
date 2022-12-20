@@ -37,9 +37,9 @@ def _mk_random(size, dtype='float32', array_backend=NUMPY):
         data = for_backend(sparse.random(size, format=form).astype(dtype), array_backend)
     elif array_backend in DENSE_BACKENDS:
         if dtype.kind == 'c':
-            choice = [0, 1, -1, 0+1j, 0-1j]
+            choice = [0, 2, -4, 0+5j, 0-6j]
         else:
-            choice = [0, 1]
+            choice = [0, 3]
         data = np.random.choice(choice, size=size).astype(dtype)
         coords2 = tuple(np.random.choice(range(c)) for c in size)
         coords10 = tuple(np.random.choice(range(c)) for c in size)
@@ -87,12 +87,23 @@ def test_for_backend(left, right, dtype):
     left_ref = _mk_random(shape, dtype=dtype, array_backend=NUMPY)
     assert isinstance(left_ref, np.ndarray)
     data = for_backend(left_ref, left)
+    # On CUDA 10.1 and CuPy 8.3 one may end up with invalid data structures for
+    # CSC matrices that will error out here.
+    # That's what `conda install -c conda-forge cupy` installed on Python 3.7
+    # and Windows 11 at the time of writing.
+    if hasattr(data, 'toarray'):
+        data.toarray()
+
     if left == CUDA:
         assert get_backend(data) == NUMPY
     else:
         assert get_backend(data) == left
 
+    # See above!
     converted = for_backend(data, right)
+    if hasattr(converted, 'toarray'):
+        converted.toarray()
+
     if right == CUDA:
         assert get_backend(converted) == NUMPY
     else:
@@ -113,7 +124,6 @@ def test_for_backend(left, right, dtype):
 
     assert converted.shape == target_shape
     assert converted_back.shape == target_shape
-
     assert np.allclose(left_ref.reshape(target_shape), converted_back)
 
 
