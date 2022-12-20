@@ -7,7 +7,7 @@ import scipy.sparse
 import sparseconverter as spc
 
 # We want to support a range of multidimensional array formats
-SUPPORTED = {spc.NUMPY, spc.SPARSE_COO, spc.SPARSE_GCXS, spc.CUPY}
+SUPPORTED = frozenset({spc.NUMPY, spc.SPARSE_COO, spc.SPARSE_GCXS, spc.CUPY})
 
 # we detect if we have working CuPy support
 try:
