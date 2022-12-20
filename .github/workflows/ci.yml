@@ -19,6 +19,17 @@ jobs:
       - run: pip install -e .[test]
       - run: pytest tests/
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: pip install pyroma
+      - run: python -m build --sdist
+      - run: pyroma dist/*.tar.gz
+
   release:
     runs-on: ubuntu-latest
     needs: tests
