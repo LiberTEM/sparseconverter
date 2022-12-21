@@ -658,16 +658,12 @@ class _ConverterDict:
 
     def __getitem__(self, item):
         if self._converters is None:
-            raise RuntimeError('Building the converter matrix has failed.')
+            raise RuntimeError('Building the converter matrix has failed previously, aborting.')
         res = self._converters.get(item, False)
         if res is False:
             left, right = item
             if left in CUDA_BACKENDS or right in CUDA_BACKENDS:
-                try:
-                    self._populate_cupy()
-                except Exception:
-                    self._converters = None
-                    raise
+                self._populate_cupy()
             return self._converters[item]
         else:
             return res

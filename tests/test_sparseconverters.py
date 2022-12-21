@@ -6,7 +6,7 @@ from sparseconverter import (
     CPU_BACKENDS, CUDA, CUPY_BACKENDS, CUPY_SCIPY_COO, CUPY_SCIPY_CSC, CUPY_SCIPY_CSR,
     DENSE_BACKENDS, NUMPY, BACKENDS, CUDA_BACKENDS, ND_BACKENDS, SCIPY_COO, SPARSE_BACKENDS,
     SPARSE_COO, SPARSE_DOK, SPARSE_GCXS, cheapest_pair, check_shape, for_backend,
-    get_backend, get_device_class, make_like, prod
+    get_backend, get_device_class, make_like, prod, benchmark_conversions
 )
 
 
@@ -187,3 +187,25 @@ def test_make_like(source_array, target):
     # axis of the 2D array to be the product of the other second axes
     with pytest.raises(ValueError):
         make_like(b, numpy_target, strict=True)
+
+
+def test_graceful_no_cupy():
+    if cupy is not None:
+        pytest.skip("FIXME mock missing CuPy")
+    with pytest.raises((ModuleNotFoundError, ImportError)):
+        benchmark_conversions(
+            shape=(3, 5, 7),
+            dtype=float,
+            density=0.1,
+            backends=(NUMPY, CUPY_SCIPY_COO),
+            repeats=1,
+            warmup=False
+        )
+    benchmark_conversions(
+        shape=(3, 5, 7),
+        dtype=float,
+        density=0.1,
+        backends=CPU_BACKENDS,
+        repeats=1,
+        warmup=False
+    )
