@@ -6,7 +6,7 @@ from sparseconverter import (
     CPU_BACKENDS, CUDA, CUPY_BACKENDS, CUPY_SCIPY_COO, CUPY_SCIPY_CSC, CUPY_SCIPY_CSR,
     DENSE_BACKENDS, NUMPY, BACKENDS, CUDA_BACKENDS, ND_BACKENDS, SCIPY_COO, SPARSE_BACKENDS,
     SPARSE_COO, SPARSE_DOK, SPARSE_GCXS, cheapest_pair, check_shape, for_backend,
-    get_backend, get_device_class, make_like, prod, benchmark_conversions
+    get_backend, get_device_class, make_like, prod, benchmark_conversions, result_type
 )
 
 
@@ -75,13 +75,18 @@ def test_for_backend(left, right, dtype):
     CUPY_SPARSE_DTYPES = {
         np.float32, np.float64, np.complex64, np.complex128
     }
+    CUPY_SPARSE_CSR_DTYPES = {
+        bool, np.float32, np.float64, np.complex64, np.complex128
+    }
     CUPY_SPARSE_FORMATS = {
         CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC
     }
     print(left, right, dtype)
     if cupy is None and (left in CUDA_BACKENDS or right in CUDA_BACKENDS):
         pytest.skip("No CuPy, skipping CuPy test")
-    if left in CUPY_SPARSE_FORMATS and dtype not in CUPY_SPARSE_DTYPES:
+    if left == CUPY_SCIPY_CSR and dtype in CUPY_SPARSE_CSR_DTYPES:
+        pass
+    elif left in CUPY_SPARSE_FORMATS and dtype not in CUPY_SPARSE_DTYPES:
         pytest.skip(f"Dtype {dtype} not supported for left format {left}, skipping.")
     shape = (7, 11, 13, 17)
     left_ref = _mk_random(shape, dtype=dtype, array_backend=NUMPY)
@@ -124,7 +129,22 @@ def test_for_backend(left, right, dtype):
 
     assert converted.shape == target_shape
     assert converted_back.shape == target_shape
+
     assert np.allclose(left_ref.reshape(target_shape), converted_back)
+
+    keep_dtype = left not in CUPY_SPARSE_FORMATS and right not in CUPY_SPARSE_FORMATS
+    keep_dtype = keep_dtype or dtype in CUPY_SPARSE_DTYPES
+    no_bool = (CUPY_SCIPY_COO, CUPY_SCIPY_CSC)
+    keep_dtype = keep_dtype or dtype == bool and left not in no_bool and right not in no_bool
+
+    target_dtype = result_type(left, right, dtype)
+
+    if (keep_dtype):
+        assert left_ref.dtype == data.dtype
+        assert left_ref.dtype == converted.dtype
+        assert left_ref.dtype == converted_back.dtype
+    else:
+        assert converted.dtype == target_dtype
 
 
 def test_unknown_format():
@@ -209,3 +229,26 @@ def test_graceful_no_cupy():
         repeats=1,
         warmup=False
     )
+
+
+@pytest.mark.parametrize(
+    'args,expected', [
+        ((bool, ), bool),
+        ((np.uint8, ), np.uint8),
+        ((bool, CUPY_SCIPY_COO), np.float32),
+        ((np.uint8, CUPY_SCIPY_COO), np.float32),
+        ((np.uint8, CUPY_SCIPY_CSR, NUMPY), np.float32),
+        ((np.complex64, CUPY_SCIPY_COO, np.int16, NUMPY), np.complex64),
+        ((np.uint32, NUMPY, CUPY_SCIPY_COO, bool), np.float64),
+        ((np.uint64, NUMPY, bool), np.uint64),
+        ((CUPY_SCIPY_CSC, np.uint64, NUMPY, bool), np.float64),
+        (DENSE_BACKENDS.union(
+                SPARSE_BACKENDS.intersection(CPU_BACKENDS), (CUPY_SCIPY_CSR, )
+            ), bool),
+        (BACKENDS, np.float32),
+    ]
+)
+def test_result_type(args, expected):
+    print(args, expected)
+    res = result_type(*args)
+    assert res == expected

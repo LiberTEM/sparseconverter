@@ -3,7 +3,6 @@ import itertools
 import time
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, Optional, Tuple, Union, Hashable
 from typing_extensions import Literal
-import warnings
 
 import numpy as np
 import scipy.sparse as sp
@@ -145,6 +144,44 @@ _base_dtypes = {
     CUPY_SCIPY_CSC: np.float32,
     CUPY_SCIPY_CSR: np.float32,
 }
+
+# Exceptions for the above matrix
+_special_mappings = {
+    (CUPY_SCIPY_CSR, np.dtype(bool)): bool,
+}
+
+
+def result_type(*args) -> np.dtype:
+    '''
+    Find a dtype that fulfills the following properties:
+
+    * Can contain :code:`numpy.result_type(...)` of all items in :code:`args`
+      that are not a backend specifier.
+    * Supported by all items in :code:`args` that are backend specifiers
+    '''
+    backends = []
+    others = []
+
+    for a in args:
+        try:
+            if a in BACKENDS:
+                backends.append(a)
+            else:
+                others.append(a)
+        except TypeError:
+            others.append(a)
+    if others:
+        result_dtype = np.result_type(*others)
+    else:
+        result_dtype = np.dtype(bool)
+    stable = False
+    while not stable:
+        prev = result_dtype
+        for b in backends:
+            typ = _special_mappings.get((b, result_dtype), _base_dtypes[b])
+            result_dtype = np.result_type(result_dtype, typ)
+        stable = prev == result_dtype
+    return result_dtype
 
 
 def prod(shape: Tuple) -> int:
@@ -339,6 +376,32 @@ class _ConverterDict:
             np.float32, np.float64, np.complex64, np.complex128
         }
 
+        CUPY_SPARSE_CSR_DTYPES = {
+            np.dtype(bool), np.float32, np.float64, np.complex64, np.complex128
+        }
+
+        def _adjust_dtype_cupy_sparse(array_backend: ArrayBackend):
+            '''
+            return dtype upconversion function for the specified cupyx.scipy.sparse backend.
+            '''
+            if array_backend == CUPY_SCIPY_CSR:
+                allowed = CUPY_SPARSE_CSR_DTYPES
+            elif array_backend in (CUPY_SCIPY_COO, CUPY_SCIPY_CSC):
+                allowed = CUPY_SPARSE_DTYPES
+            else:
+                allowed = BACKENDS
+
+            def adjust(arr):
+                if arr.dtype in allowed:
+                    res = arr
+                    # print('_adjust_dtype_cupy_sparse passthrough', arr.dtype, res.dtype)
+                else:
+                    # Base dtype is the same for all cupyx.scipy.sparse matrices
+                    res = arr.astype(result_type(arr, array_backend))
+                return res
+
+            return adjust
+
         def _GCXS_to_cupy_coo(arr: sparse.GCXS):
             reshaped = arr.reshape((arr.shape[0], -1))
             return cupyx.scipy.sparse.coo_matrix(reshaped.to_scipy_sparse())
@@ -378,7 +441,7 @@ class _ConverterDict:
             Use GPU for sparsification if dtype allows, otherwise CPU
             '''
             reshaped = arr.reshape((arr.shape[0], -1))
-            if arr.dtype in CUPY_SPARSE_DTYPES:
+            if arr.dtype in CUPY_SPARSE_CSR_DTYPES:
                 intermediate = cupyx.scipy.sparse.csr_matrix(reshaped)
                 return intermediate.get()
             else:
@@ -413,7 +476,7 @@ class _ConverterDict:
             '''
             Use GPU for sparsification if dtype allows, otherwise CPU
             '''
-            if arr.dtype in CUPY_SPARSE_DTYPES:
+            if arr.dtype in CUPY_SPARSE_CSR_DTYPES:
                 reshaped = arr.reshape((arr.shape[0], -1))
                 intermediate = cupyx.scipy.sparse.csr_matrix(reshaped)
                 return sparse.GCXS(intermediate.get()).reshape(arr.shape)
@@ -433,6 +496,62 @@ class _ConverterDict:
                 intermediate = cupy.asnumpy(arr)
                 return sparse.DOK.from_numpy(intermediate)
 
+        _adjust_dtype_for_cupy_scipy_coo = _adjust_dtype_cupy_sparse(CUPY_SCIPY_COO)
+        _adjust_dtype_for_cupy_scipy_csr = _adjust_dtype_cupy_sparse(CUPY_SCIPY_CSR)
+        _adjust_dtype_for_cupy_scipy_csc = _adjust_dtype_cupy_sparse(CUPY_SCIPY_CSC)
+
+        def _CUPY_to_cupy_scipy_coo(arr: cupy.array):
+            if has_cupy_coo_construction:
+                return cupyx.scipy.sparse.coo_matrix(
+                    _adjust_dtype_for_cupy_scipy_coo(
+                        _flatsig(arr)
+                    )
+                )
+            elif not has_csr_complex128_bug or arr.dtype != np.complex128:
+                return cupyx.scipy.sparse.coo_matrix(
+                    cupyx.scipy.sparse.csr_matrix(
+                        _adjust_dtype_for_cupy_scipy_coo(
+                            _flatsig(arr)
+                        )
+                    )
+                )
+            else:
+                fail_coo_complex128(arr)
+
+        def _CUPY_to_cupy_scipy_csr(arr: cupy.array):
+            if has_csr_complex128_bug and arr.dtype == np.complex128:
+                if has_cupy_coo_construction:
+                    return cupyx.scipy.sparse.csr_matrix(
+                        cupyx.scipy.sparse.coo_matrix(
+                            _flatsig(arr)
+                        )
+                    )
+                else:
+                    return fail_coo_complex128(arr)
+            else:
+                return cupyx.scipy.sparse.csr_matrix(
+                    _adjust_dtype_for_cupy_scipy_csr(
+                        _flatsig(arr)
+                    )
+                )
+
+        def _CUPY_to_cupy_scipy_csc(arr: cupy.array):
+            if has_csr_complex128_bug and arr.dtype == np.complex128:
+                if has_cupy_coo_construction:
+                    return cupyx.scipy.sparse.csc_matrix(
+                        cupyx.scipy.sparse.coo_matrix(
+                            _flatsig(arr)
+                        )
+                    )
+                else:
+                    return fail_coo_complex128(arr)
+            else:
+                return cupyx.scipy.sparse.csc_matrix(
+                    _adjust_dtype_for_cupy_scipy_csc(
+                        _flatsig(arr)
+                    )
+                )
+
         def _sparse_coo_to_CUPY(arr: sparse.COO):
             '''
             Use GPU for densification if dtype allows, otherwise CPU
@@ -449,12 +568,13 @@ class _ConverterDict:
             '''
             Use GPU for densification if dtype allows, otherwise CPU
             '''
-            if arr.dtype in CUPY_SPARSE_DTYPES:
+            if arr.compressed_axes == (0, ) and arr.dtype in CUPY_SPARSE_CSR_DTYPES:
                 reshaped = arr.reshape((arr.shape[0], -1))
-                if arr.compressed_axes == (0, ):
-                    intermediate = cupyx.scipy.sparse.csr_matrix(reshaped.to_scipy_sparse())
-                elif arr.compressed_axes == (1, ):
-                    intermediate = cupyx.scipy.sparse.csc_matrix(reshaped.to_scipy_sparse())
+                intermediate = cupyx.scipy.sparse.csr_matrix(reshaped.to_scipy_sparse())
+                return intermediate.toarray().reshape(arr.shape)
+            elif arr.compressed_axes == (1, ) and arr.dtype in CUPY_SPARSE_DTYPES:
+                reshaped = arr.reshape((arr.shape[0], -1))
+                intermediate = cupyx.scipy.sparse.csc_matrix(reshaped.to_scipy_sparse())
                 return intermediate.toarray().reshape(arr.shape)
             else:
                 intermediate = arr.todense()
@@ -472,90 +592,56 @@ class _ConverterDict:
                 intermediate = arr.todense()
                 return cupy.array(intermediate)
 
-        def _adjust_dtype_cupy_sparse(arr):
+        def _scipy_csr_to_CUPY(arr: sp.csr_matrix):
             '''
-            dtype upconversion to cupyx.scipy.sparse.
+            Use GPU for densification if dtype allows, otherwise CPU
+            '''
+            if arr.dtype in CUPY_SPARSE_CSR_DTYPES:
+                intermediate = cupyx.scipy.sparse.csr_matrix(arr)
+                return intermediate.toarray()
+            else:
+                intermediate = arr.toarray()
+                return cupy.array(intermediate)
 
-            FIXME add support for bool
+        def _scipy_coo_to_CUPY(arr: sp.coo_matrix):
+            '''
+            Use GPU for densification if dtype allows, otherwise CPU
             '''
             if arr.dtype in CUPY_SPARSE_DTYPES:
-                res = arr
-                # print('_adjust_dtype_cupy_sparse passthrough', arr.dtype, res.dtype)
+                intermediate = cupyx.scipy.sparse.coo_matrix(arr)
+                return intermediate.toarray()
             else:
-                # Base dtype is the same for all cupyx.scipy.sparse matrices
-                res = arr.astype(np.result_type(arr, _base_dtypes[CUPY_SCIPY_COO]))
-                # print('_adjust_dtype_cupy_sparse convert', arr.dtype, res.dtype)
-            return res
+                intermediate = arr.toarray()
+                return cupy.array(intermediate)
+
+        def _scipy_csc_to_CUPY(arr: sp.coo_matrix):
+            '''
+            Use GPU for densification if dtype allows, otherwise CPU
+            '''
+            if arr.dtype in CUPY_SPARSE_DTYPES:
+                intermediate = cupyx.scipy.sparse.csc_matrix(arr)
+                return intermediate.toarray()
+            else:
+                intermediate = arr.toarray()
+                return cupy.array(intermediate)
+
+        def _cupy_scipy_csr_to_scipy_coo(arr: cupyx.scipy.sparse.csr_matrix):
+            if arr.dtype in CUPY_SPARSE_DTYPES:
+                return cupyx.scipy.sparse.coo_matrix(arr).get()
+            else:
+                return sp.coo_matrix(arr.get())
+
+        def _cupy_scipy_csr_to_scipy_csc(arr: cupyx.scipy.sparse.csr_matrix):
+            if arr.dtype in CUPY_SPARSE_DTYPES:
+                return cupyx.scipy.sparse.csc_matrix(arr).get()
+            else:
+                return sp.csc_matrix(arr.get())
 
         self._converters[(NUMPY, CUPY)] = cupy.array
         self._converters[(CUDA, CUPY)] = cupy.array
         self._converters[(CUPY, NUMPY)] = cupy.asnumpy
         self._converters[(CUPY, CUDA)] = cupy.asnumpy
-        # Accepted by constructor of target class
-        for left in (SCIPY_COO, SCIPY_CSR, SCIPY_CSC,
-                CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC):
-            for right in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
-                if (left, right) not in self._converters:
-                    if left in ND_BACKENDS:
-                        self._converters[(left, right)] = chain(
-                            _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
-                        )
-                    else:
-                        self._converters[(left, right)] = chain(
-                            _adjust_dtype_cupy_sparse, _classes[right]
-                        )
-        # Work around https://github.com/cupy/cupy/issues/7035
-        # Otherwise CUPY -> {CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC}
-        # could be handled by the block above.
-        left, right = CUPY, CUPY_SCIPY_COO
-        if (left, right) not in self._converters:
-            if has_cupy_coo_construction:
-                self._converters[(left, right)] = chain(
-                    _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
-                )
-            elif not has_csr_complex128_bug:
-                self._converters[(left, right)] = chain(
-                    _flatsig, _adjust_dtype_cupy_sparse, _classes[CUPY_SCIPY_CSR], _classes[right]
-                )
-            else:
-                self._converters[(left, right)] = fail_coo_complex128
-                warnings.warn(
-                    "Please upgrade CuPy and/or CUDA: "
-                    f"Constructing {CUPY_SCIPY_COO} from {CUPY} doesn't work (old CuPy version)"
-                    "and installation is affected by this bug: "
-                    "https://github.com/cupy/cupy/issues/7035 "
-                    "(old cuSPARSE version)."
-                )
-        for right in CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
-            if (left, right) not in self._converters:
-                if has_csr_complex128_bug and has_cupy_coo_construction:
-                    self._converters[(left, right)] = chain(
-                        # First convert to COO which is not affected
-                        # Fortunately the overhead is not too bad.
-                        _flatsig, _adjust_dtype_cupy_sparse,
-                        _classes[CUPY_SCIPY_COO],
-                        _classes[right]
-                    )
-                elif not has_csr_complex128_bug:
-                    self._converters[(left, right)] = chain(
 
-                        _flatsig, _adjust_dtype_cupy_sparse, _classes[right]
-                    )
-                else:
-                    self._converters[(left, right)] = fail_coo_complex128
-                    warnings.warn(
-                        "Please upgrade CuPy and/or CUDA: "
-                        f"Constructing {CUPY_SCIPY_COO} from {CUPY} doesn't work (old CuPy version)"
-                        "and installation is affected by this bug: "
-                        "https://github.com/cupy/cupy/issues/7035 "
-                        "(old cuSPARSE version)."
-                    )
-        for left in NUMPY, CUDA:
-            for right in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
-                if (left, right) not in self._converters:
-                    c1 = self._converters[(left, CUPY)]
-                    c2 = self._converters[(CUPY, right)]
-                    self._converters[(left, right)] = chain(c1, c2)
         for left in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
             if (left, CUPY) not in self._converters:
                 self._converters[(left, CUPY)] = _classes[left].toarray
@@ -568,14 +654,40 @@ class _ConverterDict:
             if (left, right) not in self._converters:
                 self._converters[(left, right)] = _classes[left].get
 
+        # Accepted by constructor of target class
+        for left in (SCIPY_COO, SCIPY_CSR, SCIPY_CSC,
+                CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC):
+            for right in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
+                if (left, right) not in self._converters:
+                    if left in ND_BACKENDS:
+                        self._converters[(left, right)] = chain(
+                            _flatsig, _adjust_dtype_cupy_sparse(right), _classes[right]
+                        )
+                    else:
+                        self._converters[(left, right)] = chain(
+                            _adjust_dtype_cupy_sparse(right), _classes[right]
+                        )
+        # Work around https://github.com/cupy/cupy/issues/7035
+        # Otherwise CUPY -> {CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC}
+        # could be handled by the block above.
+        self._converters[CUPY, CUPY_SCIPY_COO] = _CUPY_to_cupy_scipy_coo
+        self._converters[CUPY, CUPY_SCIPY_CSR] = _CUPY_to_cupy_scipy_csr
+        self._converters[CUPY, CUPY_SCIPY_CSC] = _CUPY_to_cupy_scipy_csc
+        for left in NUMPY, CUDA:
+            for right in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
+                if (left, right) not in self._converters:
+                    c1 = self._converters[(left, CUPY)]
+                    c2 = self._converters[(CUPY, right)]
+                    self._converters[(left, right)] = chain(c1, c2)
+
         self._converters[(SPARSE_GCXS, CUPY_SCIPY_COO)] = chain(
-            _adjust_dtype_cupy_sparse, _GCXS_to_cupy_coo
+            _adjust_dtype_cupy_sparse(CUPY_SCIPY_COO), _GCXS_to_cupy_coo
         )
         self._converters[(SPARSE_GCXS, CUPY_SCIPY_CSR)] = chain(
-            _adjust_dtype_cupy_sparse, _GCXS_to_cupy_csr
+            _adjust_dtype_cupy_sparse(CUPY_SCIPY_CSR), _GCXS_to_cupy_csr
         )
         self._converters[(SPARSE_GCXS, CUPY_SCIPY_CSC)] = chain(
-            _adjust_dtype_cupy_sparse, _GCXS_to_cupy_csc
+            _adjust_dtype_cupy_sparse(CUPY_SCIPY_CSC), _GCXS_to_cupy_csc
         )
         self._converters[(SPARSE_GCXS, CUPY)] = _GCXS_to_cupy
 
@@ -591,6 +703,13 @@ class _ConverterDict:
         self._converters[(SPARSE_GCXS, CUPY)] = _sparse_gcxs_to_CUPY
         self._converters[(SPARSE_DOK, CUPY)] = _sparse_dok_to_CUPY
 
+        self._converters[(SCIPY_COO, CUPY)] = _scipy_coo_to_CUPY
+        self._converters[(SCIPY_CSR, CUPY)] = _scipy_csr_to_CUPY
+        self._converters[(SCIPY_CSC, CUPY)] = _scipy_csc_to_CUPY
+
+        self._converters[(CUPY_SCIPY_CSR, SCIPY_COO)] = _cupy_scipy_csr_to_scipy_coo
+        self._converters[(CUPY_SCIPY_CSR, SCIPY_CSC)] = _cupy_scipy_csr_to_scipy_csc
+
         proxies = [
             (CUPY_SCIPY_COO, SCIPY_COO, NUMPY),
             (CUPY_SCIPY_COO, SCIPY_COO, CUDA),
@@ -602,9 +721,8 @@ class _ConverterDict:
 
             (CUPY_SCIPY_CSR, SCIPY_CSR, NUMPY),
             (CUPY_SCIPY_CSR, SCIPY_CSR, CUDA),
-            (CUPY_SCIPY_CSR, CUPY_SCIPY_COO, SCIPY_COO),
-            (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSC),
-            (CUPY_SCIPY_CSR, CUPY_SCIPY_COO, SPARSE_COO),
+
+            (CUPY_SCIPY_CSR, SCIPY_COO, SPARSE_COO),
             (CUPY_SCIPY_CSR, SCIPY_CSR, SPARSE_GCXS),
             (CUPY_SCIPY_CSR, SCIPY_CSR, SPARSE_DOK),
 
@@ -615,10 +733,6 @@ class _ConverterDict:
             (CUPY_SCIPY_CSC, CUPY_SCIPY_COO, SPARSE_COO),
             (CUPY_SCIPY_CSC, SCIPY_CSC, SPARSE_GCXS),
             (CUPY_SCIPY_CSC, SCIPY_CSC, SPARSE_DOK),
-
-            (SCIPY_COO, CUPY_SCIPY_COO, CUPY),
-            (SCIPY_CSR, CUPY_SCIPY_CSR, CUPY),
-            (SCIPY_CSC, CUPY_SCIPY_CSC, CUPY),
 
             (SPARSE_COO, SCIPY_COO, CUPY_SCIPY_COO),
             (SPARSE_COO, SCIPY_COO, CUPY_SCIPY_CSR),
