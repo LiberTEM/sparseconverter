@@ -70,10 +70,22 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Still TODO
 
-* cupyx.sparse formats with dtype `bool`
 * PyTorch arrays
 * SciPy sparse arrays as opposed to SciPy sparse matrices.
 * More detailed cost metric based on more real-world use cases and parameters.
+
+## Changelog
+
+### 0.2.0
+
+* Introduce `result_type()` to find the smallest NumPy dtype that accomodates
+  all parameters. Allowed as parameters are all valid arguments to
+  `numpy.result_type(...)` plus backend specifiers.
+* Support `cupyx.scipy.sparse.csr_matrix` with `dtype=bool`.
+
+### 0.1.1
+
+Initial release
 
 ## Known issues
 
