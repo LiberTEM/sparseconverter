@@ -22,14 +22,16 @@ def main():
     print("a3 is", spc.get_backend(a3))
 
     # Which format is probably fastest to create from NumPy?
-    _, right = spc.cheapest_pair(
+    left, right = spc.cheapest_pair(
         source_backends=(spc.NUMPY, ),
         target_backends=(
             spc.SPARSE_GCXS, spc.SPARSE_COO, spc.SPARSE_DOK,
             spc.SCIPY_COO, spc.SCIPY_CSC, spc.SCIPY_CSR
         )
     )
+    cost = spc.conversion_cost(left, right)
     print(f"Converting from NumPy to {right} is probably cheapest.")
+    print(f"The cost factor of converting NumPy to {right} is {cost}.")
 
     # Does our output have a shape that is compatible with a target shape?
     spc.check_shape(a3, a1.shape)

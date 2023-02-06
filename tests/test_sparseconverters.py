@@ -1,3 +1,5 @@
+import random
+
 import pytest
 import numpy as np
 import sparse
@@ -6,7 +8,8 @@ from sparseconverter import (
     CPU_BACKENDS, CUDA, CUPY_BACKENDS, CUPY_SCIPY_COO, CUPY_SCIPY_CSC, CUPY_SCIPY_CSR,
     DENSE_BACKENDS, NUMPY, BACKENDS, CUDA_BACKENDS, ND_BACKENDS, SCIPY_COO, SPARSE_BACKENDS,
     SPARSE_COO, SPARSE_DOK, SPARSE_GCXS, cheapest_pair, check_shape, for_backend,
-    get_backend, get_device_class, make_like, prod, benchmark_conversions, result_type
+    get_backend, get_device_class, make_like, prod, benchmark_conversions, result_type,
+    conversion_cost
 )
 
 
@@ -252,3 +255,16 @@ def test_result_type(args, expected):
     print(args, expected)
     res = result_type(*args)
     assert res == expected
+
+
+def test_conversion_cost():
+    backend_l = list(BACKENDS)
+    for i in range(10):
+        left = random.choice(backend_l)
+        right = random.choice(backend_l)
+
+        print("cost between", left, right)
+        cost = conversion_cost(left, right)
+        print("cost", cost)
+        assert isinstance(cost, float)
+        assert np.isfinite(cost)
