@@ -1045,15 +1045,24 @@ def cheapest_pair(
 
     The cost function is currently based on hard-coded values from a simple test run.
     See :code:`scripts/benchmark.ipynb`!
-
-    If the function might be called repeatedly with the same parameters,
-    it is advantageous to use parameters with hashable types so that the result is cached.
     '''
     if not isinstance(source_backends, Hashable):
         source_backends = frozenset(source_backends)
     if not isinstance(target_backends, Hashable):
         target_backends = frozenset(target_backends)
     return _cheapest_pair(source_backends, target_backends)  # type: ignore
+
+
+def conversion_cost(source_backend: ArrayBackend, target_backend: ArrayBackend) -> float:
+    '''
+    Return a floating point value that is roughly proportional
+    to a typical conversion cost between the two array backends.
+
+    The cost function is currently based on hard-coded values from a simple test run.
+    See :code:`scripts/benchmark.ipynb`!
+    '''
+    key = (source_backend, target_backend)
+    return _cost[key]
 
 
 def for_backend(arr: ArrayT, backend: Optional[ArrayBackend], strict: bool = True) -> ArrayT:
