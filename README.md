@@ -76,6 +76,11 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.3.0
+
+* Introduce `conversion_cost()` to obtain a value roughly proportional to the conversion cost
+  between two backends.
+
 ### 0.2.0
 
 * Introduce `result_type()` to find the smallest NumPy dtype that accomodates
