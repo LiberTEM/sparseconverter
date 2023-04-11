@@ -12,7 +12,7 @@ dynamic = ["version", "readme"]
 dependencies = [
     "numpy",
     "scipy",
-    "sparse",
+    "sparse>=0.12",
     "typing-extensions",
 ]
 classifiers = [
