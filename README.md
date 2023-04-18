@@ -76,6 +76,10 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.3.1
+
+* Include version constraint for `sparse`.
+
 ### 0.3.0
 
 * Introduce `conversion_cost()` to obtain a value roughly proportional to the conversion cost
