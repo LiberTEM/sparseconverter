@@ -236,6 +236,27 @@ def _GCXS_to_csc(arr: sparse.GCXS) -> sp.csc_matrix:
     return reshaped.to_scipy_sparse().asformat('csc')
 
 
+_CSR_CSC_T = Union[sp.csr_matrix, sp.csc_matrix]
+_CSR_CSC_CUPY_T = Union["cupyx.scipy.sparse.csr_matrix", "cupyx.scipy.sparse.csc_matrix"]
+
+
+def _ensure_sorted_dedup(arr: _CSR_CSC_T) -> _CSR_CSC_T:
+    # Ensure we operate on a copy since sum_duplicates() is in_place
+    if arr.has_sorted_indices:
+        return arr.copy().sum_duplicates()
+    else:
+        # Use the method that returns a copy, then deduplicate the copy
+        return arr.sorted_indices().sum_duplicates()
+
+
+def _ensure_sorted_dedup_cupy(arr: _CSR_CSC_CUPY_T) -> _CSR_CSC_CUPY_T:
+    if arr.has_canonical_format:
+        return arr
+    else:
+        # Use the method that returns a copy, then deduplicate the copy
+        return arr.sorted_indices().sum_duplicates()
+
+
 def chain(*functions: Converter) -> Converter:
     '''
     Create a function G(x) = f3(f2(f1(x)))
