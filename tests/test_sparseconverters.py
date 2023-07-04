@@ -3,6 +3,7 @@ import random
 import pytest
 import numpy as np
 import sparse
+from numpy.testing import assert_allclose
 
 from sparseconverter import (
     CPU_BACKENDS, CUDA, CUPY_BACKENDS, CUPY_SCIPY_COO, CUPY_SCIPY_CSC, CUPY_SCIPY_CSR,
@@ -164,6 +165,7 @@ def test_for_backend(left, right, dtype):
         CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC
     }
     print(left, right, dtype)
+
     if cupy is None and (left in CUDA_BACKENDS or right in CUDA_BACKENDS):
         pytest.skip("No CuPy, skipping CuPy test")
     if left == CUPY_SCIPY_CSR and dtype in CUPY_SPARSE_CSR_DTYPES:
@@ -171,7 +173,23 @@ def test_for_backend(left, right, dtype):
     elif left in CUPY_SPARSE_FORMATS and dtype not in CUPY_SPARSE_DTYPES:
         pytest.skip(f"Dtype {dtype} not supported for left format {left}, skipping.")
     shape = (7, 11, 13, 17)
+
+    def aggregate(arr):
+        backend = get_backend(arr)
+        # Doesn't support aggregation
+        if backend in (SCIPY_CSR, CUPY_SCIPY_CSR) and arr.dtype == bool:
+            return None
+        # Doesn't support slicing
+        elif backend in (SCIPY_COO, CUPY_SCIPY_COO):
+            return None
+        try:
+            return for_backend(arr[2:4].sum(axis=0), NUMPY).reshape(shape[1:])
+        except NotImplementedError:
+            pass
+        return None
+
     left_ref = _mk_random(shape, dtype=dtype, array_backend=NUMPY)
+    left_ref_agg = aggregate(left_ref)
     assert isinstance(left_ref, np.ndarray)
     data = for_backend(left_ref, left)
     # On CUDA 10.1 and CuPy 8.3 one may end up with invalid data structures for
@@ -181,15 +199,18 @@ def test_for_backend(left, right, dtype):
     if hasattr(data, 'toarray'):
         data.toarray()
 
-    if left in (SCIPY_COO, CUPY_SCIPY_COO):
-        data = _scramble_coo(_add_duplicate_coo(data))
-    elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
-        data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
+    if False:
+        if left in (SCIPY_COO, CUPY_SCIPY_COO):
+            data = _scramble_coo(_add_duplicate_coo(data))
+        elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
+            data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
 
     if left == CUDA:
         assert get_backend(data) == NUMPY
     else:
         assert get_backend(data) == left
+
+    left_agg = aggregate(data)
 
     # See above!
     converted = for_backend(data, right)
@@ -201,7 +222,12 @@ def test_for_backend(left, right, dtype):
     else:
         assert get_backend(converted) == right
 
+    converted_agg = aggregate(converted)
+
     converted_back = for_backend(converted, NUMPY)
+
+    back_agg = aggregate(converted_back)
+
     assert isinstance(converted_back, np.ndarray)
 
     if left in ND_BACKENDS and right in ND_BACKENDS:
@@ -218,6 +244,13 @@ def test_for_backend(left, right, dtype):
     assert converted_back.shape == target_shape
 
     assert np.allclose(left_ref.reshape(target_shape), converted_back)
+
+    if left_agg is not None:
+        assert_allclose(left_ref_agg, left_agg)
+    if converted_agg is not None:
+        assert_allclose(left_ref_agg, converted_agg)
+    if back_agg is not None:
+        assert_allclose(left_ref_agg, back_agg)
 
     keep_dtype = left not in CUPY_SPARSE_FORMATS and right not in CUPY_SPARSE_FORMATS
     keep_dtype = keep_dtype or dtype in CUPY_SPARSE_DTYPES

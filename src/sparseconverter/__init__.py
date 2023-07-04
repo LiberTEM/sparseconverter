@@ -151,6 +151,40 @@ _special_mappings = {
 }
 
 
+def _test_GCXS_supports_non_canonical():
+    # Checks for https://github.com/pydata/sparse/issues/602
+    data = np.array((2., 1., 3., 3., 1.))
+    indices = np.array((1, 0, 0, 1, 1), dtype=int)
+    indptr = np.array((0, 2, 5), dtype=int)
+    ref = np.array(((1., 2.), (3., 4.)))
+
+    csr_check = sp.csr_matrix((data, indices, indptr), shape=(2, 2))
+    csr_works = (
+        np.all(csr_check[:1].todense() == ref[:1])
+        and np.all(csr_check[1:].todense() == ref[1:])
+    )
+    if not csr_works:
+        raise RuntimeError(
+            'scipy.sparse.csr_matrix gave unexpected result. '
+            'This is a bug, please report at https://github.com/LiberTEM/sparseconverter/!'
+        )
+    try:
+        gcxs_check = sparse.GCXS(csr_check)
+        gcxs_works = (
+            np.all(gcxs_check[:1].todense() == ref[:1])
+            and np.all(gcxs_check[1:].todense() == ref[1:])
+        )
+        return gcxs_works
+    # Maybe a first "bandaid" for GCXS is throwing an error? In that case we canonicalize
+    # the same way as if the bug was present.
+    except Exception:
+        raise  # FIXME remove
+        return False
+
+
+_GCXS_supports_non_canonical = _test_GCXS_supports_non_canonical()
+
+
 def result_type(*args) -> np.dtype:
     '''
     Find a dtype that fulfills the following properties:
@@ -243,10 +277,18 @@ _CSR_CSC_CUPY_T = Union["cupyx.scipy.sparse.csr_matrix", "cupyx.scipy.sparse.csc
 def _ensure_sorted_dedup(arr: _CSR_CSC_T) -> _CSR_CSC_T:
     # Ensure we operate on a copy since sum_duplicates() is in_place
     if arr.has_sorted_indices:
-        return arr.copy().sum_duplicates()
+        result = arr.copy()
     else:
-        # Use the method that returns a copy, then deduplicate the copy
-        return arr.sorted_indices().sum_duplicates()
+        # Use the method that returns a copy
+        result = arr.sorted_indices()
+    result.sum_duplicates()
+    return result
+
+
+def _ensure_dedup(arr: sp.coo_matrix) -> sp.coo_matrix:
+    result = arr.copy()
+    result.sum_duplicates()
+    return result
 
 
 def _ensure_sorted_dedup_cupy(arr: _CSR_CSC_CUPY_T) -> _CSR_CSC_CUPY_T:
@@ -254,7 +296,9 @@ def _ensure_sorted_dedup_cupy(arr: _CSR_CSC_CUPY_T) -> _CSR_CSC_CUPY_T:
         return arr
     else:
         # Use the method that returns a copy, then deduplicate the copy
-        return arr.sorted_indices().sum_duplicates()
+        result = arr.sorted_indices()
+        result.sum_duplicates()
+        return result
 
 
 def chain(*functions: Converter) -> Converter:
@@ -293,7 +337,6 @@ class _ConverterDict:
             # Support direct construction from each other
             for left in (
                         NUMPY, CUDA, SPARSE_COO, SPARSE_GCXS, SPARSE_DOK,
-                        SCIPY_COO, SCIPY_CSR, SCIPY_CSC
                     ):
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
@@ -318,10 +361,22 @@ class _ConverterDict:
                 for right in NUMPY, CUDA:
                     if (left, right) not in self._converters:
                         self._converters[(left, right)] = _classes[left].toarray
-            for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+            for left in SCIPY_CSR, SCIPY_CSC:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
-                        self._converters[(left, right)] = _classes[right].from_scipy_sparse
+                        if _GCXS_supports_non_canonical:
+                            self._converters[(left, right)] = _classes[right].from_scipy_sparse
+                        else:
+                            self._converters[(left, right)] = chain(
+                                _ensure_sorted_dedup, _classes[right].from_scipy_sparse
+                            )
+            for left in SCIPY_COO, :
+                for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = chain(
+                            _ensure_dedup, _classes[right].from_scipy_sparse
+                        )
+
             self._converters[(SPARSE_COO, SCIPY_COO)] = chain(_flatsig, sparse.COO.to_scipy_sparse)
             self._converters[(SPARSE_COO, SCIPY_CSR)] = chain(_flatsig, sparse.COO.tocsr)
             self._converters[(SPARSE_COO, SCIPY_CSC)] = chain(_flatsig, sparse.COO.tocsc)
@@ -500,7 +555,11 @@ class _ConverterDict:
             if arr.dtype in CUPY_SPARSE_CSR_DTYPES:
                 reshaped = arr.reshape((arr.shape[0], -1))
                 intermediate = cupyx.scipy.sparse.csr_matrix(reshaped)
-                return sparse.GCXS(intermediate.get()).reshape(arr.shape)
+                intermediate = intermediate.get()
+                if not _GCXS_supports_non_canonical:
+                    intermediate.sort_indices()
+                    intermediate.sum_duplicates()
+                return sparse.GCXS(intermediate).reshape(arr.shape)
             else:
                 intermediate = cupy.asnumpy(arr)
                 return sparse.GCXS.from_numpy(intermediate)
@@ -700,7 +759,6 @@ class _ConverterDict:
                     c1 = self._converters[(left, CUPY)]
                     c2 = self._converters[(CUPY, right)]
                     self._converters[(left, right)] = chain(c1, c2)
-
         self._converters[(SPARSE_GCXS, CUPY_SCIPY_COO)] = chain(
             _adjust_dtype_cupy_sparse(CUPY_SCIPY_COO), _GCXS_to_cupy_coo
         )
