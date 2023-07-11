@@ -271,7 +271,6 @@ def _GCXS_to_csc(arr: sparse.GCXS) -> sp.csc_matrix:
 
 
 _CSR_CSC_T = Union[sp.csr_matrix, sp.csc_matrix]
-_CSR_CSC_CUPY_T = Union["cupyx.scipy.sparse.csr_matrix", "cupyx.scipy.sparse.csc_matrix"]
 
 
 def _ensure_sorted_dedup(arr: _CSR_CSC_T) -> _CSR_CSC_T:
@@ -283,22 +282,6 @@ def _ensure_sorted_dedup(arr: _CSR_CSC_T) -> _CSR_CSC_T:
         result = arr.sorted_indices()
     result.sum_duplicates()
     return result
-
-
-def _ensure_dedup(arr: sp.coo_matrix) -> sp.coo_matrix:
-    result = arr.copy()
-    result.sum_duplicates()
-    return result
-
-
-def _ensure_sorted_dedup_cupy(arr: _CSR_CSC_CUPY_T) -> _CSR_CSC_CUPY_T:
-    if arr.has_canonical_format:
-        return arr
-    else:
-        # Use the method that returns a copy, then deduplicate the copy
-        result = arr.sorted_indices()
-        result.sum_duplicates()
-        return result
 
 
 def chain(*functions: Converter) -> Converter:
@@ -373,9 +356,7 @@ class _ConverterDict:
             for left in SCIPY_COO, :
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
-                        self._converters[(left, right)] = chain(
-                            _ensure_dedup, _classes[right].from_scipy_sparse
-                        )
+                        self._converters[(left, right)] = _classes[right].from_scipy_sparse
 
             self._converters[(SPARSE_COO, SCIPY_COO)] = chain(_flatsig, sparse.COO.to_scipy_sparse)
             self._converters[(SPARSE_COO, SCIPY_CSR)] = chain(_flatsig, sparse.COO.tocsr)
@@ -445,8 +426,17 @@ class _ConverterDict:
                 "(old cuSPARSE version)."
             )
 
+        def detect_bool_csr_bug():
+            data = cupy.array((True, True, True, False, True))
+            indices = cupy.array((0, 1, 0, 1, 1), dtype=int)
+            indptr = cupy.array((0, 2, 5), dtype=int)
+
+            c_csr = cupyx.scipy.sparse.csr_matrix((data, indices, indptr))
+            return not np.all(c_csr.todense())
+
         has_csr_complex128_bug = detect_csr_complex128_bug()
         has_cupy_coo_construction = detect_coo_works()
+        has_bool_csr_bug = detect_bool_csr_bug()
 
         CUPY_SPARSE_DTYPES = {
             np.float32, np.float64, np.complex64, np.complex128
@@ -677,6 +667,10 @@ class _ConverterDict:
             Use GPU for densification if dtype allows, otherwise CPU
             '''
             if arr.dtype in CUPY_SPARSE_CSR_DTYPES:
+                if arr.dtype == bool and has_bool_csr_bug:
+                    # Take copy since duplicates are summed in-place
+                    arr = arr.copy()
+                    arr.sum_duplicates()
                 intermediate = cupyx.scipy.sparse.csr_matrix(arr)
                 return intermediate.toarray()
             else:
@@ -717,12 +711,25 @@ class _ConverterDict:
             else:
                 return sp.csc_matrix(arr.get())
 
+        def _cupy_scipy_csr_to_CUPY(arr: cupyx.scipy.sparse.csr_matrix):
+            # Mitigation for https://github.com/cupy/cupy/issues/7713
+            if arr.dtype == bool and has_bool_csr_bug:
+                if not arr.has_canonical_format:
+                    # sum_duplicates() doesn't work for bool, so we deduplicate on the CPU
+                    cpu_arr = arr.get()
+                    cpu_arr.sum_duplicates()
+                    return cupyx.scipy.sparse.csr_matrix(cpu_arr).toarray()
+            # Fallthrough
+            return arr.toarray()
+
         self._converters[(NUMPY, CUPY)] = cupy.array
         self._converters[(CUDA, CUPY)] = cupy.array
         self._converters[(CUPY, NUMPY)] = cupy.asnumpy
         self._converters[(CUPY, CUDA)] = cupy.asnumpy
 
-        for left in CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC:
+        self._converters[(CUPY_SCIPY_CSR, CUPY)] = _cupy_scipy_csr_to_CUPY
+
+        for left in CUPY_SCIPY_COO, CUPY_SCIPY_CSC:
             if (left, CUPY) not in self._converters:
                 self._converters[(left, CUPY)] = _classes[left].toarray
 
@@ -874,175 +881,175 @@ _converters = _ConverterDict()
 # See scripts/benchmark.ipynb to generate this list
 # FIXME improve cost basis based on real use cases.
 _cost = {
-    (CUDA, CUDA): 9.52e-06,
-    (CUDA, CUPY): 0.0034923,
-    (CUDA, CUPY_SCIPY_COO): 0.02723361,
-    (CUDA, CUPY_SCIPY_CSC): 0.04614623,
-    (CUDA, CUPY_SCIPY_CSR): 0.03003148,
-    (CUDA, NUMPY): 1.158e-05,
-    (CUDA, NUMPY_MATRIX): 7.85e-05,
-    (CUDA, SCIPY_COO): 0.07095157,
-    (CUDA, SCIPY_CSC): 0.08312156,
-    (CUDA, SCIPY_CSR): 0.08185261,
-    (CUDA, SPARSE_COO): 0.05721102,
-    (CUDA, SPARSE_DOK): 0.47822719,
-    (CUDA, SPARSE_GCXS): 0.0926257,
-    (CUPY, CUDA): 0.04123289,
-    (CUPY, CUPY): 9.94e-06,
-    (CUPY, CUPY_SCIPY_COO): 0.02365191,
-    (CUPY, CUPY_SCIPY_CSC): 0.01339789,
-    (CUPY, CUPY_SCIPY_CSR): 0.02236629,
-    (CUPY, NUMPY): 0.04115815,
-    (CUPY, NUMPY_MATRIX): 0.04145609,
-    (CUPY, SCIPY_COO): 0.12031532,
-    (CUPY, SCIPY_CSC): 0.1171756,
-    (CUPY, SCIPY_CSR): 0.11456013,
-    (CUPY, SPARSE_COO): 0.1018334,
-    (CUPY, SPARSE_DOK): 0.52614732,
-    (CUPY, SPARSE_GCXS): 0.14133173,
-    (CUPY_SCIPY_COO, CUDA): 0.01391734,
-    (CUPY_SCIPY_COO, CUPY): 0.08673978,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_COO): 9.15e-06,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_CSC): 0.03534527,
-    (CUPY_SCIPY_COO, CUPY_SCIPY_CSR): 0.03556132,
-    (CUPY_SCIPY_COO, NUMPY): 0.01307202,
-    (CUPY_SCIPY_COO, NUMPY_MATRIX): 0.02308691,
-    (CUPY_SCIPY_COO, SCIPY_COO): 0.01752424,
-    (CUPY_SCIPY_COO, SCIPY_CSC): 0.04930567,
-    (CUPY_SCIPY_COO, SCIPY_CSR): 0.04840724,
-    (CUPY_SCIPY_COO, SPARSE_COO): 0.02267181,
-    (CUPY_SCIPY_COO, SPARSE_DOK): 0.81842092,
-    (CUPY_SCIPY_COO, SPARSE_GCXS): 0.04826163,
-    (CUPY_SCIPY_CSC, CUDA): 0.0168752,
-    (CUPY_SCIPY_CSC, CUPY): 0.04769173,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_COO): 0.02170808,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSC): 7.97e-06,
-    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSR): 0.02813724,
-    (CUPY_SCIPY_CSC, NUMPY): 0.01218606,
-    (CUPY_SCIPY_CSC, NUMPY_MATRIX): 0.01833548,
-    (CUPY_SCIPY_CSC, SCIPY_COO): 0.01265958,
-    (CUPY_SCIPY_CSC, SCIPY_CSC): 0.00424232,
-    (CUPY_SCIPY_CSC, SCIPY_CSR): 0.02838422,
-    (CUPY_SCIPY_CSC, SPARSE_COO): 0.12949171,
-    (CUPY_SCIPY_CSC, SPARSE_DOK): 0.91622471,
-    (CUPY_SCIPY_CSC, SPARSE_GCXS): 0.01107186,
-    (CUPY_SCIPY_CSR, CUDA): 0.01544975,
-    (CUPY_SCIPY_CSR, CUPY): 0.04449919,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_COO): 0.01864054,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC): 0.03305878,
-    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSR): 9.44e-06,
-    (CUPY_SCIPY_CSR, NUMPY): 0.01093995,
-    (CUPY_SCIPY_CSR, NUMPY_MATRIX): 0.01565349,
-    (CUPY_SCIPY_CSR, SCIPY_COO): 0.0187434,
-    (CUPY_SCIPY_CSR, SCIPY_CSC): 0.01831002,
-    (CUPY_SCIPY_CSR, SCIPY_CSR): 0.00920348,
-    (CUPY_SCIPY_CSR, SPARSE_COO): 0.02926526,
-    (CUPY_SCIPY_CSR, SPARSE_DOK): 0.81829223,
-    (CUPY_SCIPY_CSR, SPARSE_GCXS): 0.00943145,
-    (NUMPY, CUDA): 8.96e-06,
-    (NUMPY, CUPY): 0.00304166,
-    (NUMPY, CUPY_SCIPY_COO): 0.03111887,
-    (NUMPY, CUPY_SCIPY_CSC): 0.03194446,
-    (NUMPY, CUPY_SCIPY_CSR): 0.02707654,
-    (NUMPY, NUMPY): 8.62e-06,
-    (NUMPY, NUMPY_MATRIX): 8.378e-05,
-    (NUMPY, SCIPY_COO): 0.07762542,
-    (NUMPY, SCIPY_CSC): 0.08492988,
-    (NUMPY, SCIPY_CSR): 0.07794126,
-    (NUMPY, SPARSE_COO): 0.05836581,
-    (NUMPY, SPARSE_DOK): 0.48218718,
-    (NUMPY, SPARSE_GCXS): 0.09733027,
-    (NUMPY_MATRIX, CUDA): 1.267e-05,
-    (NUMPY_MATRIX, CUPY): 0.00304186,
-    (NUMPY_MATRIX, CUPY_SCIPY_COO): 0.03103336,
-    (NUMPY_MATRIX, CUPY_SCIPY_CSC): 0.03340842,
-    (NUMPY_MATRIX, CUPY_SCIPY_CSR): 0.02498352,
-    (NUMPY_MATRIX, NUMPY): 1.266e-05,
-    (NUMPY_MATRIX, NUMPY_MATRIX): 9.09e-06,
-    (NUMPY_MATRIX, SCIPY_COO): 0.07374739,
-    (NUMPY_MATRIX, SCIPY_CSC): 0.08479951,
-    (NUMPY_MATRIX, SCIPY_CSR): 0.07748237,
-    (NUMPY_MATRIX, SPARSE_COO): 0.05546078,
-    (NUMPY_MATRIX, SPARSE_DOK): 0.42378837,
-    (NUMPY_MATRIX, SPARSE_GCXS): 0.08626198,
-    (SCIPY_COO, CUDA): 0.00558513,
-    (SCIPY_COO, CUPY): 0.01156896,
-    (SCIPY_COO, CUPY_SCIPY_COO): 0.02330746,
-    (SCIPY_COO, CUPY_SCIPY_CSC): 0.01858102,
-    (SCIPY_COO, CUPY_SCIPY_CSR): 0.01082556,
-    (SCIPY_COO, NUMPY): 0.00653755,
-    (SCIPY_COO, NUMPY_MATRIX): 0.00598033,
-    (SCIPY_COO, SCIPY_COO): 8.16e-06,
-    (SCIPY_COO, SCIPY_CSC): 0.01044739,
-    (SCIPY_COO, SCIPY_CSR): 0.00378696,
-    (SCIPY_COO, SPARSE_COO): 0.00141525,
-    (SCIPY_COO, SPARSE_DOK): 0.80436851,
-    (SCIPY_COO, SPARSE_GCXS): 0.00408728,
-    (SCIPY_CSC, CUDA): 0.00567477,
-    (SCIPY_CSC, CUPY): 0.01150378,
-    (SCIPY_CSC, CUPY_SCIPY_COO): 0.02839993,
-    (SCIPY_CSC, CUPY_SCIPY_CSC): 0.00359595,
-    (SCIPY_CSC, CUPY_SCIPY_CSR): 0.00917898,
-    (SCIPY_CSC, NUMPY): 0.00634705,
-    (SCIPY_CSC, NUMPY_MATRIX): 0.00548948,
-    (SCIPY_CSC, SCIPY_COO): 0.0104994,
-    (SCIPY_CSC, SCIPY_CSC): 8.02e-06,
-    (SCIPY_CSC, SCIPY_CSR): 0.00648227,
-    (SCIPY_CSC, SPARSE_COO): 0.12335432,
-    (SCIPY_CSC, SPARSE_DOK): 0.91889736,
-    (SCIPY_CSC, SPARSE_GCXS): 7.436e-05,
-    (SCIPY_CSR, CUDA): 0.00568018,
-    (SCIPY_CSR, CUPY): 0.0096229,
-    (SCIPY_CSR, CUPY_SCIPY_COO): 0.02727776,
-    (SCIPY_CSR, CUPY_SCIPY_CSC): 0.01258067,
-    (SCIPY_CSR, CUPY_SCIPY_CSR): 0.00259827,
-    (SCIPY_CSR, NUMPY): 0.00597631,
-    (SCIPY_CSR, NUMPY_MATRIX): 0.0056923,
-    (SCIPY_CSR, SCIPY_COO): 0.00909677,
-    (SCIPY_CSR, SCIPY_CSC): 0.01083296,
-    (SCIPY_CSR, SCIPY_CSR): 8.53e-06,
-    (SCIPY_CSR, SPARSE_COO): 0.01889156,
-    (SCIPY_CSR, SPARSE_DOK): 0.81050336,
-    (SCIPY_CSR, SPARSE_GCXS): 6.774e-05,
-    (SPARSE_COO, CUDA): 0.01559104,
-    (SPARSE_COO, CUPY): 0.02050667,
-    (SPARSE_COO, CUPY_SCIPY_COO): 0.04699705,
-    (SPARSE_COO, CUPY_SCIPY_CSC): 0.03912978,
-    (SPARSE_COO, CUPY_SCIPY_CSR): 0.03297643,
-    (SPARSE_COO, NUMPY): 0.01665228,
-    (SPARSE_COO, NUMPY_MATRIX): 0.01669986,
-    (SPARSE_COO, SCIPY_COO): 0.02236511,
-    (SPARSE_COO, SCIPY_CSC): 0.03321482,
-    (SPARSE_COO, SCIPY_CSR): 0.02309729,
-    (SPARSE_COO, SPARSE_COO): 9.63e-06,
-    (SPARSE_COO, SPARSE_DOK): 0.86456496,
-    (SPARSE_COO, SPARSE_GCXS): 0.03934677,
-    (SPARSE_DOK, CUDA): 0.11838129,
-    (SPARSE_DOK, CUPY): 0.12566395,
-    (SPARSE_DOK, CUPY_SCIPY_COO): 0.46361514,
-    (SPARSE_DOK, CUPY_SCIPY_CSC): 0.48294454,
-    (SPARSE_DOK, CUPY_SCIPY_CSR): 0.48472009,
-    (SPARSE_DOK, NUMPY): 0.12760996,
-    (SPARSE_DOK, NUMPY_MATRIX): 0.12691516,
-    (SPARSE_DOK, SCIPY_COO): 0.47121842,
-    (SPARSE_DOK, SCIPY_CSC): 0.45739357,
-    (SPARSE_DOK, SCIPY_CSR): 0.45030841,
-    (SPARSE_DOK, SPARSE_COO): 0.43964837,
-    (SPARSE_DOK, SPARSE_DOK): 8.7e-06,
-    (SPARSE_DOK, SPARSE_GCXS): 0.4815116,
-    (SPARSE_GCXS, CUDA): 0.05721252,
-    (SPARSE_GCXS, CUPY): 0.05968288,
-    (SPARSE_GCXS, CUPY_SCIPY_COO): 0.54629951,
-    (SPARSE_GCXS, CUPY_SCIPY_CSC): 0.51329979,
-    (SPARSE_GCXS, CUPY_SCIPY_CSR): 0.51411286,
-    (SPARSE_GCXS, NUMPY): 0.05773925,
-    (SPARSE_GCXS, NUMPY_MATRIX): 0.05410605,
-    (SPARSE_GCXS, SCIPY_COO): 0.44208745,
-    (SPARSE_GCXS, SCIPY_CSC): 0.43770924,
-    (SPARSE_GCXS, SCIPY_CSR): 0.43229283,
-    (SPARSE_GCXS, SPARSE_COO): 0.03560626,
-    (SPARSE_GCXS, SPARSE_DOK): 0.88085017,
-    (SPARSE_GCXS, SPARSE_GCXS): 2.003e-05,
+    (CUDA, CUDA): 1.397e-05,
+    (CUDA, CUPY): 0.00290094,
+    (CUDA, CUPY_SCIPY_COO): 0.03676262,
+    (CUDA, CUPY_SCIPY_CSC): 0.02478382,
+    (CUDA, CUPY_SCIPY_CSR): 0.03029807,
+    (CUDA, NUMPY): 1.101e-05,
+    (CUDA, NUMPY_MATRIX): 0.00014465,
+    (CUDA, SCIPY_COO): 0.07126909,
+    (CUDA, SCIPY_CSC): 0.07710105,
+    (CUDA, SCIPY_CSR): 0.07387733,
+    (CUDA, SPARSE_COO): 0.06164377,
+    (CUDA, SPARSE_DOK): 0.41626783,
+    (CUDA, SPARSE_GCXS): 0.08713908,
+    (CUPY, CUDA): 0.04128729,
+    (CUPY, CUPY): 1.315e-05,
+    (CUPY, CUPY_SCIPY_COO): 0.03479637,
+    (CUPY, CUPY_SCIPY_CSC): 0.02891527,
+    (CUPY, CUPY_SCIPY_CSR): 0.02077345,
+    (CUPY, NUMPY): 0.04131443,
+    (CUPY, NUMPY_MATRIX): 0.04139519,
+    (CUPY, SCIPY_COO): 0.11484382,
+    (CUPY, SCIPY_CSC): 0.12240084,
+    (CUPY, SCIPY_CSR): 0.11560138,
+    (CUPY, SPARSE_COO): 0.08293617,
+    (CUPY, SPARSE_DOK): 0.45851607,
+    (CUPY, SPARSE_GCXS): 0.13566548,
+    (CUPY_SCIPY_COO, CUDA): 0.01279124,
+    (CUPY_SCIPY_COO, CUPY): 0.08431704,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_COO): 9.8e-06,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_CSC): 0.03095062,
+    (CUPY_SCIPY_COO, CUPY_SCIPY_CSR): 0.03350027,
+    (CUPY_SCIPY_COO, NUMPY): 0.01959753,
+    (CUPY_SCIPY_COO, NUMPY_MATRIX): 0.01955723,
+    (CUPY_SCIPY_COO, SCIPY_COO): 0.0140366,
+    (CUPY_SCIPY_COO, SCIPY_CSC): 0.05566742,
+    (CUPY_SCIPY_COO, SCIPY_CSR): 0.04540595,
+    (CUPY_SCIPY_COO, SPARSE_COO): 0.02240446,
+    (CUPY_SCIPY_COO, SPARSE_DOK): 0.81763242,
+    (CUPY_SCIPY_COO, SPARSE_GCXS): 0.0503551,
+    (CUPY_SCIPY_CSC, CUDA): 0.01170401,
+    (CUPY_SCIPY_CSC, CUPY): 0.04833271,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_COO): 0.0154935,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSC): 1.079e-05,
+    (CUPY_SCIPY_CSC, CUPY_SCIPY_CSR): 0.01317206,
+    (CUPY_SCIPY_CSC, NUMPY): 0.01652527,
+    (CUPY_SCIPY_CSC, NUMPY_MATRIX): 0.01623056,
+    (CUPY_SCIPY_CSC, SCIPY_COO): 0.03094247,
+    (CUPY_SCIPY_CSC, SCIPY_CSC): 0.00378959,
+    (CUPY_SCIPY_CSC, SCIPY_CSR): 0.04601307,
+    (CUPY_SCIPY_CSC, SPARSE_COO): 0.09272055,
+    (CUPY_SCIPY_CSC, SPARSE_DOK): 0.87353325,
+    (CUPY_SCIPY_CSC, SPARSE_GCXS): 0.01177203,
+    (CUPY_SCIPY_CSR, CUDA): 0.01429861,
+    (CUPY_SCIPY_CSR, CUPY): 0.04460615,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_COO): 0.01443459,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC): 0.002124,
+    (CUPY_SCIPY_CSR, CUPY_SCIPY_CSR): 1.167e-05,
+    (CUPY_SCIPY_CSR, NUMPY): 0.01489683,
+    (CUPY_SCIPY_CSR, NUMPY_MATRIX): 0.01469383,
+    (CUPY_SCIPY_CSR, SCIPY_COO): 0.01336538,
+    (CUPY_SCIPY_CSR, SCIPY_CSC): 0.0139769,
+    (CUPY_SCIPY_CSR, SCIPY_CSR): 0.00912916,
+    (CUPY_SCIPY_CSR, SPARSE_COO): 0.02864303,
+    (CUPY_SCIPY_CSR, SPARSE_DOK): 0.80137306,
+    (CUPY_SCIPY_CSR, SPARSE_GCXS): 0.00764849,
+    (NUMPY, CUDA): 1.228e-05,
+    (NUMPY, CUPY): 0.00275125,
+    (NUMPY, CUPY_SCIPY_COO): 0.03072501,
+    (NUMPY, CUPY_SCIPY_CSC): 0.03698203,
+    (NUMPY, CUPY_SCIPY_CSR): 0.02565548,
+    (NUMPY, NUMPY): 2.177e-05,
+    (NUMPY, NUMPY_MATRIX): 0.00011643,
+    (NUMPY, SCIPY_COO): 0.071367,
+    (NUMPY, SCIPY_CSC): 0.08173664,
+    (NUMPY, SCIPY_CSR): 0.07519809,
+    (NUMPY, SPARSE_COO): 0.06172041,
+    (NUMPY, SPARSE_DOK): 0.41673362,
+    (NUMPY, SPARSE_GCXS): 0.08833201,
+    (NUMPY_MATRIX, CUDA): 1.812e-05,
+    (NUMPY_MATRIX, CUPY): 0.00284773,
+    (NUMPY_MATRIX, CUPY_SCIPY_COO): 0.02692905,
+    (NUMPY_MATRIX, CUPY_SCIPY_CSC): 0.0248778,
+    (NUMPY_MATRIX, CUPY_SCIPY_CSR): 0.02930477,
+    (NUMPY_MATRIX, NUMPY): 3.088e-05,
+    (NUMPY_MATRIX, NUMPY_MATRIX): 1.357e-05,
+    (NUMPY_MATRIX, SCIPY_COO): 0.07221178,
+    (NUMPY_MATRIX, SCIPY_CSC): 0.08215391,
+    (NUMPY_MATRIX, SCIPY_CSR): 0.07470251,
+    (NUMPY_MATRIX, SPARSE_COO): 0.05499004,
+    (NUMPY_MATRIX, SPARSE_DOK): 0.36448452,
+    (NUMPY_MATRIX, SPARSE_GCXS): 0.07961737,
+    (SCIPY_COO, CUDA): 0.00554266,
+    (SCIPY_COO, CUPY): 0.01049599,
+    (SCIPY_COO, CUPY_SCIPY_COO): 0.02096826,
+    (SCIPY_COO, CUPY_SCIPY_CSC): 0.01695301,
+    (SCIPY_COO, CUPY_SCIPY_CSR): 0.00833004,
+    (SCIPY_COO, NUMPY): 0.0057289,
+    (SCIPY_COO, NUMPY_MATRIX): 0.00514385,
+    (SCIPY_COO, SCIPY_COO): 1.483e-05,
+    (SCIPY_COO, SCIPY_CSC): 0.00908695,
+    (SCIPY_COO, SCIPY_CSR): 0.00409992,
+    (SCIPY_COO, SPARSE_COO): 0.0015528,
+    (SCIPY_COO, SPARSE_DOK): 0.76291548,
+    (SCIPY_COO, SPARSE_GCXS): 0.00415204,
+    (SCIPY_CSC, CUDA): 0.00534249,
+    (SCIPY_CSC, CUPY): 0.01051322,
+    (SCIPY_CSC, CUPY_SCIPY_COO): 0.02545826,
+    (SCIPY_CSC, CUPY_SCIPY_CSC): 0.00291492,
+    (SCIPY_CSC, CUPY_SCIPY_CSR): 0.00827505,
+    (SCIPY_CSC, NUMPY): 0.00567323,
+    (SCIPY_CSC, NUMPY_MATRIX): 0.00572489,
+    (SCIPY_CSC, SCIPY_COO): 0.00559732,
+    (SCIPY_CSC, SCIPY_CSC): 1.329e-05,
+    (SCIPY_CSC, SCIPY_CSR): 0.00556892,
+    (SCIPY_CSC, SPARSE_COO): 0.07105924,
+    (SCIPY_CSC, SPARSE_DOK): 0.82178102,
+    (SCIPY_CSC, SPARSE_GCXS): 0.00404301,
+    (SCIPY_CSR, CUDA): 0.00493635,
+    (SCIPY_CSR, CUPY): 0.01012645,
+    (SCIPY_CSR, CUPY_SCIPY_COO): 0.02334584,
+    (SCIPY_CSR, CUPY_SCIPY_CSC): 0.01313419,
+    (SCIPY_CSR, CUPY_SCIPY_CSR): 0.00245257,
+    (SCIPY_CSR, NUMPY): 0.00552472,
+    (SCIPY_CSR, NUMPY_MATRIX): 0.00569328,
+    (SCIPY_CSR, SCIPY_COO): 0.00398569,
+    (SCIPY_CSR, SCIPY_CSC): 0.00942009,
+    (SCIPY_CSR, SCIPY_CSR): 1.459e-05,
+    (SCIPY_CSR, SPARSE_COO): 0.01763324,
+    (SCIPY_CSR, SPARSE_DOK): 0.83002728,
+    (SCIPY_CSR, SPARSE_GCXS): 0.00215682,
+    (SPARSE_COO, CUDA): 0.01227037,
+    (SPARSE_COO, CUPY): 0.01397232,
+    (SPARSE_COO, CUPY_SCIPY_COO): 0.03187509,
+    (SPARSE_COO, CUPY_SCIPY_CSC): 0.03986542,
+    (SPARSE_COO, CUPY_SCIPY_CSR): 0.02893439,
+    (SPARSE_COO, NUMPY): 0.0098226,
+    (SPARSE_COO, NUMPY_MATRIX): 0.01040078,
+    (SPARSE_COO, SCIPY_COO): 0.02069974,
+    (SPARSE_COO, SCIPY_CSC): 0.03106024,
+    (SPARSE_COO, SCIPY_CSR): 0.02506089,
+    (SPARSE_COO, SPARSE_COO): 1.328e-05,
+    (SPARSE_COO, SPARSE_DOK): 0.83920339,
+    (SPARSE_COO, SPARSE_GCXS): 0.03594461,
+    (SPARSE_DOK, CUDA): 0.11058626,
+    (SPARSE_DOK, CUPY): 0.10950506,
+    (SPARSE_DOK, CUPY_SCIPY_COO): 0.44371138,
+    (SPARSE_DOK, CUPY_SCIPY_CSC): 0.4265934,
+    (SPARSE_DOK, CUPY_SCIPY_CSR): 0.43226047,
+    (SPARSE_DOK, NUMPY): 0.11354399,
+    (SPARSE_DOK, NUMPY_MATRIX): 0.10729896,
+    (SPARSE_DOK, SCIPY_COO): 0.42308864,
+    (SPARSE_DOK, SCIPY_CSC): 0.45172044,
+    (SPARSE_DOK, SCIPY_CSR): 0.42915226,
+    (SPARSE_DOK, SPARSE_COO): 0.41190378,
+    (SPARSE_DOK, SPARSE_DOK): 1.187e-05,
+    (SPARSE_DOK, SPARSE_GCXS): 0.4325561,
+    (SPARSE_GCXS, CUDA): 0.05120677,
+    (SPARSE_GCXS, CUPY): 0.05303882,
+    (SPARSE_GCXS, CUPY_SCIPY_COO): 0.47022746,
+    (SPARSE_GCXS, CUPY_SCIPY_CSC): 0.45507096,
+    (SPARSE_GCXS, CUPY_SCIPY_CSR): 0.44203396,
+    (SPARSE_GCXS, NUMPY): 0.04957471,
+    (SPARSE_GCXS, NUMPY_MATRIX): 0.04963172,
+    (SPARSE_GCXS, SCIPY_COO): 0.36567051,
+    (SPARSE_GCXS, SCIPY_CSC): 0.34491236,
+    (SPARSE_GCXS, SCIPY_CSR): 0.32723106,
+    (SPARSE_GCXS, SPARSE_COO): 0.03921757,
+    (SPARSE_GCXS, SPARSE_DOK): 0.87211339,
+    (SPARSE_GCXS, SPARSE_GCXS): 1.298e-05,
 }
 
 # In order to support subclasses and not check all formats each time
