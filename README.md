@@ -76,6 +76,13 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.3.2
+
+* Detection and workaround for https://github.com/pydata/sparse/issues/602.
+* Detection and workaround for https://github.com/cupy/cupy/issues/7713.
+* Test with duplicates and scrambled indices.
+* Test correctness of basic array operations.
+
 ### 0.3.1
 
 * Include version constraint for `sparse`.
