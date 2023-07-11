@@ -281,6 +281,7 @@ def _ensure_sorted_dedup(arr: _CSR_CSC_T) -> _CSR_CSC_T:
         # Use the method that returns a copy
         result = arr.sorted_indices()
     result.sum_duplicates()
+    result.prune()
     return result
 
 
@@ -340,10 +341,16 @@ class _ConverterDict:
                 for right in NUMPY, CUDA:
                     if (left, right) not in self._converters:
                         self._converters[(left, right)] = _classes[left].todense
-            for left in SCIPY_COO, SCIPY_CSR, SCIPY_CSC:
+            for left in SCIPY_COO, SCIPY_CSR:
                 for right in NUMPY, CUDA:
                     if (left, right) not in self._converters:
                         self._converters[(left, right)] = _classes[left].toarray
+            for left in SCIPY_CSC, :
+                for right in NUMPY, CUDA:
+                    if (left, right) not in self._converters:
+                        self._converters[(left, right)] = chain(
+                            _ensure_sorted_dedup, _classes[left].toarray
+                        )
             for left in SCIPY_CSR, SCIPY_CSC:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
