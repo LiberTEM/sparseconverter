@@ -78,7 +78,11 @@ def _add_duplicate_csc_csr(arr):
         last_index = arr.indices[-1]
         new_indices = np.append(arr.indices, (last_index, last_index))
         new_indptr = arr.indptr.copy()
-        new_indptr[-1] += 2
+        for last_not_empty in range(1, len(new_indptr)):
+            if new_indptr[-last_not_empty] != new_indptr[-last_not_empty - 1]:
+                break
+        for i in range(1, last_not_empty + 1):
+            new_indptr[-i] += 2
         arr = arr.__class__(
             (new_data, new_indices, new_indptr),
             shape=arr.shape,
@@ -210,16 +214,19 @@ def test_for_backend(left, right, dtype):
     if hasattr(data, 'toarray'):
         data.toarray()
 
-    if True:
-        if left in (SCIPY_COO, CUPY_SCIPY_COO):
-            data = _scramble_coo(_add_duplicate_coo(data))
-        elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
-            data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
+    assert_allclose(for_backend(data, NUMPY).reshape(left_ref.shape), left_ref)
+
+    if left in (SCIPY_COO, CUPY_SCIPY_COO):
+        data = _scramble_coo(_add_duplicate_coo(data))
+    elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
+        data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
 
     if left == CUDA:
         assert get_backend(data) == NUMPY
     else:
         assert get_backend(data) == left
+
+    assert_allclose(for_backend(data, NUMPY).reshape(left_ref.shape), left_ref)
 
     left_agg = aggregate(data)
 
