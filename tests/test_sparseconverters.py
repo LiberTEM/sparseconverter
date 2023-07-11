@@ -242,7 +242,20 @@ def test_for_backend(left, right, dtype):
 
     assert converted.shape == target_shape
     assert converted_back.shape == target_shape
-    assert_allclose(left_ref.reshape(target_shape), converted_back)
+    try:
+        assert_allclose(left_ref.reshape(target_shape), converted_back)
+    except AssertionError:
+        import sys
+        opt = np.get_printoptions()
+        np.set_printoptions(threshold=sys.maxsize)
+        left_ref_reshaped = left_ref.reshape(target_shape)
+        print("left_ref", repr(left_ref_reshaped))
+        print("converted_back", repr(converted_back))
+        print("difference", converted_back - left_ref_reshaped)
+        print("data", repr(data))
+        print("converted", repr(converted))
+        np.set_printoptions(**opt)
+        raise
 
     if left_agg is not None:
         assert_allclose(left_ref_agg, left_agg)
