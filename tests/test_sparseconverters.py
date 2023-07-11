@@ -103,42 +103,42 @@ def _scramble_csr_csc(arr_inout):
     return arr_inout
 
 
-def _add_duplicate_coo(arr_inout):
-    if arr_inout.nnz > 0:
-        if arr_inout.dtype in (bool, np.uint8, np.uint16, np.uint32, np.uint64):
+def _add_duplicate_coo(arr):
+    if arr.nnz > 0:
+        if arr.dtype in (bool, np.uint8, np.uint16, np.uint32, np.uint64):
             new_value = 0
         else:
             new_value = 1
-        new_data = np.append(arr_inout.data, (0, new_value))
+        new_data = np.append(arr.data, (0, new_value))
         if new_value:
             new_data[-3] -= new_value
-        last_col = arr_inout.col[-1]
-        new_col = np.append(arr_inout.col, (last_col, last_col))
-        last_row = arr_inout.row[-1]
-        new_row = np.append(arr_inout.row, (last_row, last_row))
-        arr_inout.data = new_data.astype(arr_inout.data.dtype)
-        arr_inout.col = new_col.astype(arr_inout.col.dtype)
-        arr_inout.row = new_row.astype(arr_inout.row.dtype)
-    return arr_inout
+        last_col = arr.col[-1]
+        new_col = np.append(arr.col, (last_col, last_col))
+        last_row = arr.row[-1]
+        new_row = np.append(arr.row, (last_row, last_row))
+        return arr.__class__((new_data, (new_row, new_col)), shape=arr.shape, dtype=arr.dtype)
+    else:
+        return arr
 
 
-def _scramble_coo(arr_inout):
+def _scramble_coo(arr):
     # We build an array with compound type to shuffle data and indices together
     # even though they have different dtypes
     entry_dtype = [
-        ('data', arr_inout.data.dtype),
-        ('row', arr_inout.row.dtype),
-        ('col', arr_inout.col.dtype),
+        ('data', arr.data.dtype),
+        ('row', arr.row.dtype),
+        ('col', arr.col.dtype),
     ]
-    sl = np.empty(len(arr_inout.data), dtype=entry_dtype)
-    sl['data'] = for_backend(arr_inout.data, get_backend(sl['data']))
-    sl['row'] = for_backend(arr_inout.row, get_backend(sl['row']))
-    sl['col'] = for_backend(arr_inout.col, get_backend(sl['col']))
+    sl = np.empty(len(arr.data), dtype=entry_dtype)
+    sl['data'] = for_backend(arr.data, get_backend(sl['data']))
+    sl['row'] = for_backend(arr.row, get_backend(sl['row']))
+    sl['col'] = for_backend(arr.col, get_backend(sl['col']))
     np.random.shuffle(sl)
-    arr_inout.data[:] = for_backend(sl['data'], get_backend(arr_inout.data))
-    arr_inout.row[:] = for_backend(sl['row'], get_backend(arr_inout.row))
-    arr_inout.col[:] = for_backend(sl['col'], get_backend(arr_inout.col))
-    return arr_inout
+    new_data = for_backend(sl['data'], get_backend(arr.data))
+    new_row = for_backend(sl['row'], get_backend(arr.row))
+    new_col = for_backend(sl['col'], get_backend(arr.col))
+
+    return arr.__class__((new_data, (new_row, new_col)), shape=arr.shape, dtype=arr.dtype)
 
 
 @pytest.mark.parametrize(
@@ -199,7 +199,7 @@ def test_for_backend(left, right, dtype):
     if hasattr(data, 'toarray'):
         data.toarray()
 
-    if False:
+    if True:
         if left in (SCIPY_COO, CUPY_SCIPY_COO):
             data = _scramble_coo(_add_duplicate_coo(data))
         elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
@@ -242,8 +242,7 @@ def test_for_backend(left, right, dtype):
 
     assert converted.shape == target_shape
     assert converted_back.shape == target_shape
-
-    assert np.allclose(left_ref.reshape(target_shape), converted_back)
+    assert_allclose(left_ref.reshape(target_shape), converted_back)
 
     if left_agg is not None:
         assert_allclose(left_ref_agg, left_agg)
