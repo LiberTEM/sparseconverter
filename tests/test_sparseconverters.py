@@ -66,41 +66,52 @@ def _mk_random(size, dtype='float32', array_backend=NUMPY):
     return data
 
 
-def _add_duplicate_csc_csr(arr_inout):
-    if arr_inout.nnz > 0:
-        if arr_inout.dtype in (bool, np.uint8, np.uint16, np.uint32, np.uint64):
+def _add_duplicate_csc_csr(arr):
+    if arr.nnz > 0:
+        if arr.dtype in (bool, np.uint8, np.uint16, np.uint32, np.uint64):
             new_value = 0
         else:
             new_value = 1
-        new_data = np.append(arr_inout.data, (0, new_value))
+        new_data = np.append(arr.data, (0, new_value))
         if new_value:
             new_data[-3] -= new_value
-        last_index = arr_inout.indices[-1]
-        new_indices = np.append(arr_inout.indices, (last_index, last_index))
-        arr_inout.indptr[-1] += 2
-        arr_inout.data = new_data.astype(arr_inout.data.dtype)
-        arr_inout.indices = new_indices.astype(arr_inout.indices.dtype)
-    return arr_inout
+        last_index = arr.indices[-1]
+        new_indices = np.append(arr.indices, (last_index, last_index))
+        new_indptr = arr.indptr.copy()
+        new_indptr[-1] += 2
+        arr = arr.__class__(
+            (new_data, new_indices, new_indptr),
+            shape=arr.shape,
+            dtype=arr.dtype
+        )
+    return arr
 
 
-def _scramble_csr_csc(arr_inout):
+def _scramble_csr_csc(arr):
     # We build an array with compound type to shuffle data and indices together
     # even though they have different dtypes
     entry_dtype = [
-        ('data', arr_inout.data.dtype),
-        ('indices', arr_inout.indices.dtype),
+        ('data', arr.data.dtype),
+        ('indices', arr.indices.dtype),
     ]
-    for i in range(len(arr_inout.indptr) - 1):
-        start = int(arr_inout.indptr[i])
-        stop = int(arr_inout.indptr[i+1])
+    new_data = arr.data.copy()
+    new_indices = arr.indices.copy()
+    for i in range(len(arr.indptr) - 1):
+        start = int(arr.indptr[i])
+        stop = int(arr.indptr[i+1])
         sl = np.empty(shape=stop-start, dtype=entry_dtype)
-        sl['data'] = for_backend(arr_inout.data[start:stop], get_backend(sl['data']))
-        sl['indices'] = for_backend(arr_inout.indices[start:stop], get_backend(sl['indices']))
+        sl['data'] = for_backend(arr.data[start:stop], get_backend(sl['data']))
+        sl['indices'] = for_backend(arr.indices[start:stop], get_backend(sl['indices']))
         np.random.shuffle(sl)
-        arr_inout.data[start:stop] = for_backend(sl['data'], get_backend(arr_inout.data))
-        arr_inout.indices[start:stop] = for_backend(sl['indices'], get_backend(arr_inout.indices))
-    assert not arr_inout.has_sorted_indices
-    return arr_inout
+        new_data[start:stop] = for_backend(sl['data'], get_backend(arr.data))
+        new_indices[start:stop] = for_backend(sl['indices'], get_backend(arr.indices))
+    arr = arr.__class__(
+        (new_data, new_indices, arr.indptr),
+        shape=arr.shape,
+        dtype=arr.dtype
+    )
+    assert not arr.has_sorted_indices
+    return arr
 
 
 def _add_duplicate_coo(arr):
