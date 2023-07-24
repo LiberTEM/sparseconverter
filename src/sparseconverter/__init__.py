@@ -305,7 +305,10 @@ class _ConverterDict:
     works also without CuPy.
     '''
     def __init__(self):
+        self._built = False
         self._converters = {}
+
+    def _build_converters(self):
         try:
             for backend in BACKENDS:
                 self._converters[(backend, backend)] = _identity
@@ -387,6 +390,7 @@ class _ConverterDict:
         except Exception:
             self._converters = None
             raise
+        self._built = True
 
     def _populate_cupy(self):
         import cupy
@@ -857,6 +861,8 @@ class _ConverterDict:
     def __getitem__(self, item):
         if self._converters is None:
             raise RuntimeError('Building the converter matrix has failed previously, aborting.')
+        if not self._built:
+            self._build_converters()
         res = self._converters.get(item, False)
         if res is False:
             left, right = item
