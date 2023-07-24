@@ -38,7 +38,7 @@ This project creates an unified API for all conversions between the supported fo
 dtype conversion, and using an efficient intermediate format for multi-step conversions.
 
 ## Features
-* Supports Python 3.7 - (at least) 3.10
+* Supports Python 3.7 - (at least) 3.11
 * Defines constants for format identifiers
 * Various sets to group formats into categories:
   * Dense vs sparse
