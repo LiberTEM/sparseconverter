@@ -33,7 +33,7 @@ repository = "https://github.com/LiberTEM/sparseconverter"
 
 [project.optional-dependencies]
 cupy = ["cupy"]
-test = ["pytest"]
+test = ["pytest", "pytest-cov"]
 
 [tool.setuptools.dynamic]
 version = {attr = "sparseconverter.__version__"}

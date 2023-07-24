@@ -364,7 +364,9 @@ class _ConverterDict:
             for left in SCIPY_CSR, SCIPY_CSC:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
-                        self._converters[(left, right)] = _convert_csc_csr_to_pydata_sparse(left, right)
+                        self._converters[(left, right)] = _convert_csc_csr_to_pydata_sparse(
+                            left, right
+                        )
             for left in SCIPY_COO, :
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
