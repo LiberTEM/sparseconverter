@@ -76,6 +76,10 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.3.3
+
+* Perform feature checks lazily https://github.com/LiberTEM/sparseconverter/issues/15
+
 ### 0.3.2
 
 * Detection and workaround for https://github.com/pydata/sparse/issues/602.

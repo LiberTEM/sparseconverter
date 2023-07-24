@@ -9,7 +9,7 @@ import scipy.sparse as sp
 import sparse
 
 
-__version__ = '0.4.0.dev0'
+__version__ = '0.3.3'
 
 NUMPY = 'numpy'
 NUMPY_MATRIX = 'numpy.matrix'
@@ -151,6 +151,7 @@ _special_mappings = {
 }
 
 
+@lru_cache(maxsize=None)
 def _test_GCXS_supports_non_canonical():
     # Checks for https://github.com/pydata/sparse/issues/602
     data = np.array((2., 1., 3., 3., 1.))
@@ -180,9 +181,6 @@ def _test_GCXS_supports_non_canonical():
     except Exception:
         raise  # FIXME remove
         return False
-
-
-_GCXS_supports_non_canonical = _test_GCXS_supports_non_canonical()
 
 
 def result_type(*args) -> np.dtype:
@@ -347,7 +345,7 @@ class _ConverterDict:
             for left in SCIPY_CSR, SCIPY_CSC:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
-                        if _GCXS_supports_non_canonical:
+                        if _test_GCXS_supports_non_canonical():
                             self._converters[(left, right)] = _classes[right].from_scipy_sparse
                         else:
                             self._converters[(left, right)] = chain(
@@ -546,7 +544,7 @@ class _ConverterDict:
                 reshaped = arr.reshape((arr.shape[0], -1))
                 intermediate = cupyx.scipy.sparse.csr_matrix(reshaped)
                 intermediate = intermediate.get()
-                if not _GCXS_supports_non_canonical:
+                if not _test_GCXS_supports_non_canonical():
                     intermediate.sort_indices()
                     intermediate.sum_duplicates()
                 return sparse.GCXS(intermediate).reshape(arr.shape)
