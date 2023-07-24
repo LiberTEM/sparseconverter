@@ -183,6 +183,22 @@ def _test_GCXS_supports_non_canonical():
         return False
 
 
+def _convert_csc_csr_to_pydata_sparse(left, right):
+    """
+    Build conversion function from CSR/CSC (left) to COO/GCXS/DOK
+    (right) which lazily feature-checks for non-canonical support.
+    """
+    def _do_convert(arr):
+        if _test_GCXS_supports_non_canonical():
+            return _classes[right].from_scipy_sparse(arr)
+        else:
+            return chain(
+                _ensure_sorted_dedup,
+                _classes[right].from_scipy_sparse,
+            )(arr)
+    return _do_convert
+
+
 def result_type(*args) -> np.dtype:
     '''
     Find a dtype that fulfills the following properties:
@@ -348,12 +364,7 @@ class _ConverterDict:
             for left in SCIPY_CSR, SCIPY_CSC:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
-                        if _test_GCXS_supports_non_canonical():
-                            self._converters[(left, right)] = _classes[right].from_scipy_sparse
-                        else:
-                            self._converters[(left, right)] = chain(
-                                _ensure_sorted_dedup, _classes[right].from_scipy_sparse
-                            )
+                        self._converters[(left, right)] = _convert_csc_csr_to_pydata_sparse(left, right)
             for left in SCIPY_COO, :
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
