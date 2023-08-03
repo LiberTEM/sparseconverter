@@ -169,7 +169,10 @@ def _scramble_coo(arr):
         np.float32, np.float64, np.complex64, np.complex128,
     ]
 )
-def test_for_backend(left, right, dtype):
+@pytest.mark.parametrize(
+    'scramble', (True, False)
+)
+def test_for_backend(left, right, dtype, scramble):
     CUPY_SPARSE_DTYPES = {
         np.float32, np.float64, np.complex64, np.complex128
     }
@@ -216,10 +219,13 @@ def test_for_backend(left, right, dtype):
 
     assert_allclose(for_backend(data, NUMPY).reshape(left_ref.shape), left_ref)
 
-    if left in (SCIPY_COO, CUPY_SCIPY_COO):
-        data = _scramble_coo(_add_duplicate_coo(data))
-    elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
-        data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
+    if scramble:
+        if left in (SCIPY_COO, CUPY_SCIPY_COO):
+            data = _scramble_coo(_add_duplicate_coo(data))
+        elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
+            data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
+        else:
+            pytest.skip(f"Scrambling not supported for backend {left}.")
 
     if left == CUDA:
         assert get_backend(data) == NUMPY
