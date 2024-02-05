@@ -76,6 +76,11 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.3.4
+
+* Support for Python 3.12 https://github.com/LiberTEM/sparseconverter/pull/26
+* Packaging update: Tests for conda-forge https://github.com/LiberTEM/sparseconverter/pull/27
+
 ### 0.3.3
 
 * Perform feature checks lazily https://github.com/LiberTEM/sparseconverter/issues/15
