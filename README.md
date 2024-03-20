@@ -76,6 +76,10 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
+### 0.4.0 (in development)
+
+* Better error message in case of unknown array type: https://github.com/LiberTEM/sparseconverter/pull/37
+
 ### 0.3.4
 
 * Support for Python 3.12 https://github.com/LiberTEM/sparseconverter/pull/26
