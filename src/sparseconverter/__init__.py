@@ -82,6 +82,12 @@ ArrayT = Union[
 Converter = Callable[[ArrayT], ArrayT]
 
 
+# NOTE: inherits from `ValueError` instead of `TypeError` for
+# backwards-compatibility.
+class UnknownBackendError(ValueError):
+    pass
+
+
 class _ClassDict:
     '''
     Base classes for array types. The CuPy classes are loaded
@@ -1172,7 +1178,12 @@ def for_backend(arr: ArrayT, backend: Optional[ArrayBackend], strict: bool = Tru
     '''
     Convert :code:`arr` to the specified backend
     '''
-    converter = get_converter(get_backend(arr), backend, strict)
+    source_backend = get_backend(arr)
+    if source_backend is None and strict:
+        raise UnknownBackendError(
+            f"`arr` has unknown or unsupported type `{type(arr)}`"
+        )
+    converter = get_converter(source_backend, backend, strict)
     # print(source_backend, backend, converter)
     return converter(arr)
 
