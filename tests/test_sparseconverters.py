@@ -10,7 +10,7 @@ from sparseconverter import (
     DENSE_BACKENDS, NUMPY, BACKENDS, CUDA_BACKENDS, ND_BACKENDS, SCIPY_COO, SCIPY_CSC,
     SCIPY_CSR, SPARSE_BACKENDS, SPARSE_COO, SPARSE_DOK, SPARSE_GCXS,
     cheapest_pair, check_shape, for_backend, get_backend, get_device_class, make_like,
-    prod, benchmark_conversions, result_type, conversion_cost
+    prod, benchmark_conversions, result_type, conversion_cost, UnknownBackendError,
 )
 
 
@@ -311,8 +311,10 @@ def test_unknown_format():
     # Not strict returns identity for an unknown array type or backend
     assert for_backend(not_an_array, 'asdf', strict=False) is not_an_array
 
-    with pytest.raises(ValueError):
+    # strict: explicit error message
+    with pytest.raises(UnknownBackendError) as em:
         for_backend(not_an_array, 'asdf', strict=True)
+    assert "`arr` has unknown or unsupported type `str`"
 
 
 def test_cheapest_pair():
