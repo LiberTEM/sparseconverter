@@ -314,7 +314,7 @@ def test_unknown_format():
     # strict: explicit error message
     with pytest.raises(UnknownBackendError) as em:
         for_backend(not_an_array, 'asdf', strict=True)
-    assert "`arr` has unknown or unsupported type `str`"
+    assert "`arr` has unknown or unsupported type `<class 'str'>`" in str(em.value)
 
 
 def test_cheapest_pair():
