@@ -47,8 +47,8 @@ def _mk_random(size, dtype='float32', array_backend=NUMPY):
         data = np.random.choice(choice, size=size).astype(dtype)
         coords2 = tuple(np.random.choice(range(c)) for c in size)
         coords10 = tuple(np.random.choice(range(c)) for c in size)
-        data[coords2] = np.random.choice(choice) * sum(size)
-        data[coords10] = np.random.choice(choice) * 10 * sum(size)
+        data[coords2] = (np.random.choice(choice) * sum(size)).astype(dtype)
+        data[coords10] = (np.random.choice(choice) * 10 * sum(size)).astype(dtype)
         data = for_backend(data, array_backend)
     else:
         raise ValueError(f"Don't understand array format {array_backend}.")
