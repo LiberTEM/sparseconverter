@@ -157,10 +157,10 @@ def _scramble_coo(arr):
 
 
 @pytest.mark.parametrize(
-    'left', BACKENDS
+    'left', sorted(BACKENDS)
 )
 @pytest.mark.parametrize(
-    'right', BACKENDS
+    'right', sorted(BACKENDS)
 )
 @pytest.mark.parametrize(
     'dtype', [
@@ -400,10 +400,12 @@ def test_graceful_no_cupy():
         ((np.uint32, NUMPY, CUPY_SCIPY_COO, bool), np.float64),
         ((np.uint64, NUMPY, bool), np.uint64),
         ((CUPY_SCIPY_CSC, np.uint64, NUMPY, bool), np.float64),
-        (DENSE_BACKENDS.union(
+        (sorted(
+            DENSE_BACKENDS.union(
                 SPARSE_BACKENDS.intersection(CPU_BACKENDS), (CUPY_SCIPY_CSR, )
-            ), bool),
-        (BACKENDS, np.float32),
+            )
+        ), bool),
+        (sorted(BACKENDS), np.float32),
     ]
 )
 def test_result_type(args, expected):
