@@ -189,7 +189,7 @@ def test_for_backend(left, right, dtype, scramble):
     if left == CUPY_SCIPY_CSR and dtype in CUPY_SPARSE_CSR_DTYPES:
         pass
     elif left in CUPY_SPARSE_FORMATS and dtype not in CUPY_SPARSE_DTYPES:
-        pytest.skip(f"Dtype {dtype} not supported for left format {left}, skipping.")
+        pytest.xfail(f"Dtype {dtype} not supported for left format {left}, skipping.")
     shape = (7, 11, 13, 17)
 
     def aggregate(arr):
@@ -225,7 +225,7 @@ def test_for_backend(left, right, dtype, scramble):
         elif left in (CUPY_SCIPY_CSR, CUPY_SCIPY_CSC, SCIPY_CSR, SCIPY_CSC):
             data = _scramble_csr_csc(_add_duplicate_csc_csr(data))
         else:
-            pytest.skip(f"Scrambling not supported for backend {left}.")
+            pytest.xfail(f"Scrambling not supported for backend {left}.")
 
     if left == CUDA:
         assert get_backend(data) == NUMPY
