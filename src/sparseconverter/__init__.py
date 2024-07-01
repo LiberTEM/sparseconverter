@@ -341,7 +341,7 @@ class _ConverterDict:
             self._converters[(NUMPY, NUMPY_MATRIX)] = chain(_flatsig, np.asmatrix)
             self._converters[(NUMPY_MATRIX, NUMPY)] = np.asarray
 
-            for left in (NUMPY, CUDA, ):
+            for left in NUMPY, CUDA:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
                         self._converters[(left, right)] = _classes[right].from_numpy
@@ -351,7 +351,7 @@ class _ConverterDict:
                 SPARSE_GCXS: 'gcxs',
                 SPARSE_DOK: 'dok',
             }
-            for left in (SPARSE_COO, SPARSE_GCXS, SPARSE_DOK, ):
+            for left in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     if (left, right) not in self._converters:
                         self._converters[(left, right)] = partial(
