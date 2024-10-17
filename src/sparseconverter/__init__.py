@@ -1243,7 +1243,9 @@ def get_backend(arr: ArrayT) -> Optional[ArrayBackend]:
         # of numpy.ndarray
         # Also check scipy sparse array first since in some versions the array is
         # a subclass of the corresponding matrix
-        for b in (NUMPY_MATRIX, SCIPY_COO_ARRAY, SCIPY_CSC_ARRAY, SCIPY_CSR_ARRAY) + tuple(BACKENDS):
+        for b in ((
+                NUMPY_MATRIX, SCIPY_COO_ARRAY, SCIPY_CSC_ARRAY,
+                SCIPY_CSR_ARRAY) + tuple(BACKENDS)):
             # Always return NUMPY for np.ndarray
             if b == CUDA:
                 continue
