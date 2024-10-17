@@ -1,5 +1,3 @@
-import random
-
 import pytest
 import numpy as np
 import sparse
@@ -8,7 +6,7 @@ from numpy.testing import assert_allclose
 from sparseconverter import (
     CPU_BACKENDS, CUDA, CUPY_BACKENDS, CUPY_SCIPY_COO, CUPY_SCIPY_CSC, CUPY_SCIPY_CSR,
     DENSE_BACKENDS, NUMPY, BACKENDS, CUDA_BACKENDS, ND_BACKENDS, SCIPY_COO, SCIPY_CSC,
-    SCIPY_CSR, SPARSE_BACKENDS, SPARSE_COO, SPARSE_DOK, SPARSE_GCXS,
+    SCIPY_CSR, SCIPY_COO_ARRAY, SPARSE_BACKENDS, SPARSE_COO, SPARSE_DOK, SPARSE_GCXS,
     cheapest_pair, check_shape, for_backend, get_backend, get_device_class, make_like,
     prod, benchmark_conversions, result_type, conversion_cost, UnknownBackendError,
 )
@@ -198,7 +196,7 @@ def test_for_backend(left, right, dtype, scramble):
         if backend in (SCIPY_CSR, CUPY_SCIPY_CSR) and arr.dtype == bool:
             return None
         # Doesn't support slicing
-        elif backend in (SCIPY_COO, CUPY_SCIPY_COO):
+        elif backend in (SCIPY_COO, SCIPY_COO_ARRAY, CUPY_SCIPY_COO):
             return None
         try:
             return for_backend(arr[2:4].sum(axis=0), NUMPY).reshape(shape[1:])
@@ -416,12 +414,10 @@ def test_result_type(args, expected):
 
 def test_conversion_cost():
     backend_l = list(BACKENDS)
-    for i in range(10):
-        left = random.choice(backend_l)
-        right = random.choice(backend_l)
-
-        print("cost between", left, right)
-        cost = conversion_cost(left, right)
-        print("cost", cost)
-        assert isinstance(cost, float)
-        assert np.isfinite(cost)
+    for left in backend_l:
+        for right in backend_l:
+            print("cost between", left, right)
+            cost = conversion_cost(left, right)
+            print("cost", cost)
+            assert isinstance(cost, float)
+            assert np.isfinite(cost)
