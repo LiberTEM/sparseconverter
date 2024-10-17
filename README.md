@@ -38,7 +38,7 @@ This project creates an unified API for all conversions between the supported fo
 dtype conversion, and using an efficient intermediate format for multi-step conversions.
 
 ## Features
-* Supports Python 3.7 - (at least) 3.12
+* Supports Python 3.8 - (at least) 3.12
 * Defines constants for format identifiers
 * Various sets to group formats into categories:
   * Dense vs sparse
@@ -64,6 +64,9 @@ and to perform efficient conversion to supported formats as needed.
 * [`scipy.sparse.coo_matrix`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.coo_matrix.html)
 * [`scipy.sparse.csr_matrix`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csr_matrix.html)
 * [`scipy.sparse.csc_matrix`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csc_matrix.html)
+* [`scipy.sparse.coo_array`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.coo_array.html)
+* [`scipy.sparse.csr_array`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csr_array.html)
+* [`scipy.sparse.csc_array`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csc_array.html)
 * [`cupyx.scipy.sparse.coo_matrix`](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.coo_matrix.html)
 * [`cupyx.scipy.sparse.csr_matrix`](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.csr_matrix.html)
 * [`cupyx.scipy.sparse.csc_matrix`](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.csc_matrix.html)
@@ -71,7 +74,6 @@ and to perform efficient conversion to supported formats as needed.
 ## Still TODO
 
 * PyTorch arrays
-* SciPy sparse arrays as opposed to SciPy sparse matrices.
 * More detailed cost metric based on more real-world use cases and parameters.
 
 ## Changelog
@@ -79,6 +81,8 @@ and to perform efficient conversion to supported formats as needed.
 ### 0.4.0 (in development)
 
 * Better error message in case of unknown array type: https://github.com/LiberTEM/sparseconverter/pull/37
+* Support for SciPy sparse arrays: https://github.com/LiberTEM/sparseconverter/pull/52
+* Drop support for Python 3.7: https://github.com/LiberTEM/sparseconverter/pull/51
 
 ### 0.3.4
 
