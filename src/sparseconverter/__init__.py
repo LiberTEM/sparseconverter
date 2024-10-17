@@ -116,12 +116,12 @@ class _ClassDict:
         SPARSE_COO: sparse.COO,
         SPARSE_GCXS: sparse.GCXS,
         SPARSE_DOK: sparse.DOK,
-        SCIPY_COO: sp.coo_matrix,
-        SCIPY_CSR: sp.csr_matrix,
-        SCIPY_CSC: sp.csc_matrix,
         SCIPY_COO_ARRAY: sp.coo_array,
         SCIPY_CSR_ARRAY: sp.csr_array,
         SCIPY_CSC_ARRAY: sp.csc_array,
+        SCIPY_COO: sp.coo_matrix,
+        SCIPY_CSR: sp.csr_matrix,
+        SCIPY_CSC: sp.csc_matrix,
     }
 
     def __getitem__(self, item):
@@ -1241,7 +1241,9 @@ def get_backend(arr: ArrayT) -> Optional[ArrayBackend]:
         backend = None
         # Make sure to check NumPy matrix first since numpy.matrix is a subclass
         # of numpy.ndarray
-        for b in (NUMPY_MATRIX, ) + tuple(BACKENDS):
+        # Also check scipy sparse array first since in some versions the array is
+        # a subclass of the corresponding matrix
+        for b in (NUMPY_MATRIX, SCIPY_COO_ARRAY, SCIPY_CSC_ARRAY, SCIPY_CSR_ARRAY) + tuple(BACKENDS):
             # Always return NUMPY for np.ndarray
             if b == CUDA:
                 continue
