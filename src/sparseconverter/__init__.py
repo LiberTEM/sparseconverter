@@ -424,7 +424,7 @@ class _ConverterDict:
                     )
                 )
             # Make sure any missing scipy.sparse.*_array entries are populated
-            # before th following step
+            # before the following step
             self._complete_scipy_array()
 
             # Insert the conversion to and from NUMPY_MATRIX through NUMPY as a
