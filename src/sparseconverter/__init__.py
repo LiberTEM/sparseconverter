@@ -47,6 +47,8 @@ CPU_BACKENDS = frozenset((
 CUPY_BACKENDS = frozenset((CUPY, CUPY_SCIPY_COO, CUPY_SCIPY_CSR, CUPY_SCIPY_CSC))
 # "on CUDA, but no CuPy" backend that receives NumPy arrays
 CUDA_BACKENDS = CUPY_BACKENDS.union((CUDA, ))
+# Backends that don't require CUPY
+NOCUPY_BACKENDS = CPU_BACKENDS.union((CUDA, ))
 BACKENDS = CPU_BACKENDS.union(CUDA_BACKENDS)
 # Backends that support n-dimensional arrays as opposed to 2D-only
 ND_BACKENDS = frozenset((NUMPY, CUDA, CUPY, SPARSE_COO, SPARSE_GCXS, SPARSE_DOK))
@@ -403,6 +405,9 @@ class _ConverterDict:
                 for right in SPARSE_COO, SPARSE_GCXS, SPARSE_DOK:
                     self._complete((left, right), _classes[right].from_scipy_sparse)
 
+            # SCIPY_{COO,CSR,CSC}_ARRAY will be added by _complete_scipy_array()
+            # using SCIPY_{COO,CSR,CSC} as a proxy since sparse doesn't have
+            # support for conversion to and from SciPy sparse arrays
             self._insert((SPARSE_COO, SCIPY_COO), chain(_flatsig, sparse.COO.to_scipy_sparse))
             self._insert((SPARSE_COO, SCIPY_CSR), chain(_flatsig, sparse.COO.tocsr))
             self._insert((SPARSE_COO, SCIPY_CSC), chain(_flatsig, sparse.COO.tocsc))
@@ -418,32 +423,38 @@ class _ConverterDict:
                         self._converters[(SPARSE_COO, right)]
                     )
                 )
-            # Make sure missing scipy.sparse.*_array entries are populated before
-            # following stage
-            self._populate_scipy_array()
+            # Make sure any missing scipy.sparse.*_array entries are populated
+            # before th following step
+            self._complete_scipy_array()
 
-            for left in CPU_BACKENDS.union((CUDA, )):
+            # Insert the conversion to and from NUMPY_MATRIX through NUMPY as a
+            # proxy for all backends that are available without CuPy, in
+            # particular the SciPy array backends
+            for left in NOCUPY_BACKENDS:
                 proxy = NUMPY
                 right = NUMPY_MATRIX
                 c1 = self._converters[(left, proxy)]
                 c2 = self._converters[(proxy, right)]
                 self._complete((left, right), chain(c1, c2))
 
-            for right in CPU_BACKENDS.union((CUDA, )):
+            for right in NOCUPY_BACKENDS:
                 proxy = NUMPY
                 left = NUMPY_MATRIX
                 c1 = self._converters[(left, proxy)]
                 c2 = self._converters[(proxy, right)]
                 self._complete((left, right), chain(c1, c2))
-            # Populate the matrix ones
-            self._populate_scipy_array()
+
             self._check_cpu()
         except Exception:
             self._converters = None
             raise
         self._built = True
 
-    def _populate_scipy_array(self):
+    def _complete_scipy_array(self):
+        '''
+        Fill all missing entries for SCIPY_{COO,CSR,CSC}_ARRAY with
+        a proxy through SCIPY_{COO,CSR,CSC}
+        '''
         proxies = {
             SCIPY_COO_ARRAY: SCIPY_COO,
             SCIPY_CSR_ARRAY: SCIPY_CSR,
@@ -923,11 +934,11 @@ class _ConverterDict:
             c2 = self._converters[(proxy, right)]
             self._complete((left, right), chain(c1, c2))
 
-        self._populate_scipy_array()
+        self._complete_scipy_array()
         self._check_all()
 
     def _check_cpu(self):
-        available = CPU_BACKENDS.union((CUDA, ))
+        available = NOCUPY_BACKENDS
         for left in available:
             for right in available:
                 if (left, right) not in self._converters:
