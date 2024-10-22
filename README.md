@@ -78,7 +78,11 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
-### 0.4.0 (in development)
+### 0.5.0 (in development)
+
+* No changes yet
+
+### 0.4.0
 
 * Better error message in case of unknown array type: https://github.com/LiberTEM/sparseconverter/pull/37
 * Support for SciPy sparse arrays: https://github.com/LiberTEM/sparseconverter/pull/52
