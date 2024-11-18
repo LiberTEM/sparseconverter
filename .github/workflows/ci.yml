@@ -22,7 +22,7 @@ jobs:
           cache: 'pip'
       - run: pip install -e .[test]
       - run: pytest --durations=10 --cov=sparseconverter --cov-report=xml --cov-config=setup.cfg tests/
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
