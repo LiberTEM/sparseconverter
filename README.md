@@ -38,7 +38,7 @@ This project creates an unified API for all conversions between the supported fo
 dtype conversion, and using an efficient intermediate format for multi-step conversions.
 
 ## Features
-* Supports Python 3.8 - (at least) 3.12
+* Supports Python 3.9 - (at least) 3.13
 * Defines constants for format identifiers
 * Various sets to group formats into categories:
   * Dense vs sparse
@@ -80,7 +80,8 @@ and to perform efficient conversion to supported formats as needed.
 
 ### 0.5.0 (in development)
 
-* No changes yet
+* Drop support for Python 3.8 https://github.com/LiberTEM/sparseconverter/pull/61
+* Add support for Python 3.13 https://github.com/LiberTEM/sparseconverter/pull/61
 
 ### 0.4.0
 
