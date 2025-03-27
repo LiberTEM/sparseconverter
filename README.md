@@ -78,7 +78,11 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
-### 0.5.0 (in development)
+### 0.6.0 (in development)
+
+* No changes yet
+
+### 0.5.0
 
 * Drop support for Python 3.8 https://github.com/LiberTEM/sparseconverter/pull/61
 * Add support for Python 3.13 https://github.com/LiberTEM/sparseconverter/pull/61
