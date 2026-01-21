@@ -1,8 +1,9 @@
 from functools import partial, reduce, lru_cache
 import itertools
 import time
-from typing import TYPE_CHECKING, Callable, Dict, Iterable, Optional, Tuple, Union, Hashable
-from typing_extensions import Literal
+from typing import TYPE_CHECKING, Union
+from collections.abc import Callable, Iterable, Hashable
+from typing import Literal
 
 import numpy as np
 import scipy.sparse as sp
@@ -257,7 +258,7 @@ def result_type(*args) -> np.dtype:
     return result_dtype
 
 
-def prod(shape: Tuple) -> int:
+def prod(shape: tuple) -> int:
     '''
     np.prod forced to np.int64 to prevent integer overflows
     '''
@@ -1237,10 +1238,10 @@ _cost = {
 
 # In order to support subclasses and not check all formats each time
 # we cache dynamically which type maps to which format code
-_type_cache: Dict[type, Optional[ArrayBackend]] = {}
+_type_cache: dict[type, ArrayBackend | None] = {}
 
 
-def get_backend(arr: ArrayT) -> Optional[ArrayBackend]:
+def get_backend(arr: ArrayT) -> ArrayBackend | None:
     '''
     Return the backend identifier for the given array
 
@@ -1275,7 +1276,7 @@ def get_backend(arr: ArrayT) -> Optional[ArrayBackend]:
 
 
 def get_converter(
-        source_backend: Optional[ArrayBackend], target_backend: Optional[ArrayBackend],
+        source_backend: ArrayBackend | None, target_backend: ArrayBackend | None,
         strict: bool = False
 ) -> Converter:
     '''
@@ -1292,7 +1293,7 @@ def get_converter(
 
 
 @lru_cache(maxsize=None)
-def _cheapest_pair(source_backends, target_backends) -> Tuple[ArrayBackend, ArrayBackend]:
+def _cheapest_pair(source_backends, target_backends) -> tuple[ArrayBackend, ArrayBackend]:
     '''
     Actual implementation for :func:`cheapest_pair`
     '''
@@ -1309,7 +1310,7 @@ def _cheapest_pair(source_backends, target_backends) -> Tuple[ArrayBackend, Arra
 
 def cheapest_pair(
         source_backends: Iterable[ArrayBackend], target_backends: Iterable[ArrayBackend]
-) -> Tuple[ArrayBackend, ArrayBackend]:
+) -> tuple[ArrayBackend, ArrayBackend]:
     '''
     Find an efficient converter from source to target.
 
@@ -1338,7 +1339,7 @@ def conversion_cost(source_backend: ArrayBackend, target_backend: ArrayBackend) 
     return _cost[key]
 
 
-def for_backend(arr: ArrayT, backend: Optional[ArrayBackend], strict: bool = True) -> ArrayT:
+def for_backend(arr: ArrayT, backend: ArrayBackend | None, strict: bool = True) -> ArrayT:
     '''
     Convert :code:`arr` to the specified backend
     '''
@@ -1376,7 +1377,7 @@ def check_shape(arr: ArrayT, shape: Iterable[int]) -> None:
             raise ValueError(f"Mismatching shape {arr.shape} vs {shape}, backend {backend}.")
 
 
-def get_device_class(backend: Optional[ArrayBackend]) -> DeviceClass:
+def get_device_class(backend: ArrayBackend | None) -> DeviceClass:
     '''
     Determine the device class associated with an array type
 
