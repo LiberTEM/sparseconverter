@@ -10,7 +10,7 @@ import scipy.sparse as sp
 import sparse
 
 
-__version__ = '0.5.1'
+__version__ = '0.6.0'
 
 NUMPY = 'numpy'
 NUMPY_MATRIX = 'numpy.matrix'
