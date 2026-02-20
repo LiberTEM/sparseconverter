@@ -78,9 +78,13 @@ and to perform efficient conversion to supported formats as needed.
 
 ## Changelog
 
-### 0.6.0 (in development)
+### 0.7.0 (in development)
 
 * No changes yet
+
+### 0.6.0
+
+* Adapt to changed return type in `sparse==0.18.0` https://github.com/LiberTEM/sparseconverter/pull/79
 
 ### 0.5.0
 

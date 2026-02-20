@@ -10,7 +10,7 @@ import scipy.sparse as sp
 import sparse
 
 
-__version__ = '0.6.0.dev0'
+__version__ = '0.5.1'
 
 NUMPY = 'numpy'
 NUMPY_MATRIX = 'numpy.matrix'
@@ -289,7 +289,7 @@ def _GCXS_to_coo(arr: sparse.GCXS) -> sp.coo_matrix:
     depends on the compressed axes.
     '''
     reshaped = arr.reshape((arr.shape[0], -1))
-    return reshaped.to_scipy_sparse().asformat('coo')
+    return sp.coo_matrix(reshaped.to_scipy_sparse().asformat('coo'))
 
 
 def _GCXS_to_csr(arr: sparse.GCXS) -> sp.csr_matrix:
@@ -298,7 +298,7 @@ def _GCXS_to_csr(arr: sparse.GCXS) -> sp.csr_matrix:
     depends on the compressed axes.
     '''
     reshaped = arr.reshape((arr.shape[0], -1))
-    return reshaped.to_scipy_sparse().asformat('csr')
+    return sp.csr_matrix(reshaped.to_scipy_sparse().asformat('csr'))
 
 
 def _GCXS_to_csc(arr: sparse.GCXS) -> sp.csc_matrix:
@@ -307,7 +307,7 @@ def _GCXS_to_csc(arr: sparse.GCXS) -> sp.csc_matrix:
     depends on the compressed axes.
     '''
     reshaped = arr.reshape((arr.shape[0], -1))
-    return reshaped.to_scipy_sparse().asformat('csc')
+    return sp.csc_matrix(reshaped.to_scipy_sparse().asformat('csc'))
 
 
 _CSR_CSC_T = Union[sp.csr_matrix, sp.csc_matrix]
@@ -409,9 +409,10 @@ class _ConverterDict:
             # SCIPY_{COO,CSR,CSC}_ARRAY will be added by _complete_scipy_array()
             # using SCIPY_{COO,CSR,CSC} as a proxy since sparse doesn't have
             # support for conversion to and from SciPy sparse arrays
-            self._insert((SPARSE_COO, SCIPY_COO), chain(_flatsig, sparse.COO.to_scipy_sparse))
-            self._insert((SPARSE_COO, SCIPY_CSR), chain(_flatsig, sparse.COO.tocsr))
-            self._insert((SPARSE_COO, SCIPY_CSC), chain(_flatsig, sparse.COO.tocsc))
+            self._insert((SPARSE_COO, SCIPY_COO), chain(
+                _flatsig, sparse.COO.to_scipy_sparse, sp.coo_matrix))
+            self._insert((SPARSE_COO, SCIPY_CSR), chain(_flatsig, sparse.COO.tocsr, sp.csr_matrix))
+            self._insert((SPARSE_COO, SCIPY_CSC), chain(_flatsig, sparse.COO.tocsc, sp.csc_matrix))
             self._insert((SPARSE_GCXS, SCIPY_COO), _GCXS_to_coo)
             self._insert((SPARSE_GCXS, SCIPY_CSR), _GCXS_to_csr)
             self._insert((SPARSE_GCXS, SCIPY_CSC), _GCXS_to_csc)
