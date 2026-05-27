@@ -30,3 +30,9 @@ stages:
 
       - bash: $(Agent.TempDirectory)/spvenv/bin/pytest --durations=10 --cov=sparseconverter --cov-report=xml --cov-config=setup.cfg tests/
         displayName: 'Run GPU tests $(Agent.OS)'
+
+      - bash: ./scripts/codecov.sh -f ./coverage.xml
+        displayName: 'Submit coverage to codecov.io'
+        ${{ if and(not(eq(variables['Build.Reason'], 'PullRequest')), eq(variables['Build.SourceBranch'], 'refs/heads/main')) }}:
+          env:
+            CODECOV_TOKEN: $(CODECOV_TOKEN)
