@@ -1,0 +1,32 @@
+trigger:
+  branches:
+    include:
+      - main
+      - 'v*'
+
+variables:
+  - group: Coverage
+  - name: PIP_CACHE_DIR
+    value: $(Pipeline.Workspace)/.pip
+
+stages:
+  - stage: test
+    jobs:
+    - job: gpu_cupy_tests
+      pool: GPUTests
+      variables:
+        TESTDATA_BASE_PATH: '/data/'
+      steps:
+      - task: UsePythonVersion@0
+        displayName: 'Use Python 3.13'
+        inputs:
+          versionSpec: '3.13'
+
+      - bash: python3 -m venv $(Agent.TempDirectory)/spvenv
+        displayName: 'create venv'
+
+      - bash: $(Agent.TempDirectory)/spvenv/bin/pip install -U -e .[test] cupy-cuda13x "cuda-toolkit[all]<14"
+        displayName: 'install test dependencies and cuda things'
+
+      - bash: $(Agent.TempDirectory)/spvenv/bin/pytest --durations=10 --cov=sparseconverter --cov-report=xml --cov-config=setup.cfg tests/
+        displayName: 'Run GPU tests $(Agent.OS)'
